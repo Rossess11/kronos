@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>KRONOS | Gestión de Inventario CIFP Hespérides</title>
+
+  <!-- Google Font: Inter & Monospace -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Estilos Supabase Studio Clone -->
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- Supabase JS Client (v2 CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+  <!-- ========================================================
+       PANTALLA DE LOGIN (SIN CREDENCIALES POR DEFECTO)
+       ======================================================== -->
+  <div id="login-screen" class="sb-login-overlay">
+    <div class="sb-login-card">
+      <div class="sb-login-brand">
+        <!-- Icono de Inventario -->
+        <svg width="36" height="36" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+        </svg>
+        <h2>KRONOS Studio</h2>
+        <p>CIFP Hespérides &bull; Control y Gestión de Materiales</p>
+      </div>
+
+      <form id="login-form">
+        <div class="sb-form-group">
+          <label class="sb-form-label">Correo institucional (@murciaeduca.es)</label>
+          <input type="email" id="login-email" class="sb-form-input" placeholder="usuario@murciaeduca.es" required autocomplete="username">
+        </div>
+
+        <div class="sb-form-group" style="margin-bottom: 20px;">
+          <label class="sb-form-label">Contraseña</label>
+          <input type="password" id="login-password" class="sb-form-input" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+
+        <button type="submit" class="sb-btn sb-btn-emerald" style="width: 100%; padding: 8px; font-size: 13px;">
+          Iniciar Sesión en KRONOS
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ========================================================
+       APLICACIÓN PRINCIPAL
+       ======================================================== -->
+  <div id="app-layout" style="display: none;">
+
+    <!-- 1. BARRA SUPERIOR (TOPBAR) -->
+    <header class="sb-topbar">
+      <div class="sb-topbar-left">
+        <!-- Botón Desplegar / Ocultar Menú Lateral (PC, Tablet y Móvil) -->
+        <button id="sb-mobile-btn" class="sb-mobile-toggle" aria-label="Mostrar u ocultar menú lateral" title="Mostrar / Ocultar menú lateral">
+          <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+
+        <!-- Icono de Inventario -->
+        <div class="sb-inventory-logo-btn" title="Inventario CIFP Hespérides">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+          </svg>
+        </div>
+
+        <!-- Migas de pan en Español -->
+        <div class="sb-breadcrumbs">
+          <span class="breadcrumb-item" title="Organización">carm</span>
+          <span class="separator">/</span>
+          <span class="breadcrumb-item" title="Proyecto">kronos</span>
+          <span class="separator">/</span>
+          <div class="sb-branch-badge">
+            <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9a3 3 0 100-6 3 3 0 000 6zM8 15a3 3 0 100 6 3 3 0 000-6zM8 9v6m8-6a3 3 0 100-6 3 3 0 000 6zM16 9v3a3 3 0 01-3 3H8"/></svg>
+            <span>principal</span>
+            <span class="sb-prod-pill">Producción</span>
+          </div>
+        </div>
+
+        <!-- Botón Conectar Base de Datos (Solo Administrador) -->
+        <button id="btn-connect-modal" class="sb-connect-btn admin-only" title="Configurar conexión con base de datos Supabase">
+          <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+          <span id="topbar-connect-label">Supabase</span>
+        </button>
+      </div>
+
+      <!-- Centro: Turno con Icono SVG + Reloj + 1 Persona Conectada -->
+      <div class="sb-topbar-center">
+        <!-- Indicador de Turno dinámico con SVG -->
+        <div id="topbar-shift-badge" class="sb-shift-pill morning">
+          <svg id="shift-icon-svg" width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          <span id="shift-text-span">Turno Mañana (08h - 15h)</span>
+        </div>
+
+        <!-- Reloj en vivo -->
+        <div class="sb-clock-pill">
+          <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <span id="live-clock-text">--:--:--</span>
+        </div>
+
+        <!-- Indicador de 1 persona conectada -->
+        <div class="sb-online-pill" title="Usuarios conectados simultáneamente">
+          <span class="sb-online-dot"></span>
+          <span id="online-users-count-text">1 en línea</span>
+        </div>
+      </div>
+
+      <!-- Derecha: Recuadro unificado (Usuario con Rol y Departamento) y Botón Logout Gris -->
+      <div class="sb-topbar-right">
+        <!-- Recuadro unificado: Usuario, Rol y Departamento agrupados -->
+        <div class="sb-user-card-unified">
+          <div class="sb-user-card-name-row">
+            <span id="topbar-user-name" class="sb-user-name-text">Usuario</span>
+            <span id="topbar-user-role" class="sb-user-role-tag admin">ADMINISTRADOR</span>
+          </div>
+          <div id="topbar-user-dept" class="sb-user-dept-tag">
+            Emergencias y Protección Civil
+          </div>
+        </div>
+
+        <!-- Botón de Cerrar Sesión (Solo icono, color gris) -->
+        <button id="btn-logout" class="sb-logout-btn-gray" title="Cerrar sesión segura">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- 2. CUERPO PRINCIPAL (BARRA LATERAL ÚNICA + WORKSPACE) -->
+    <div class="sb-workspace">
+
+      <!-- BARRA LATERAL ÚNICA (Sin columna intermedia) -->
+      <aside class="sb-sidebar-unified" id="sb-main-sidebar">
+        <div class="sb-sidebar-header">
+          <div class="sb-sidebar-brand">
+            <span class="sb-sidebar-brand-title">KRONOS Hespérides</span>
+            <span class="sb-sidebar-brand-sub">Gestión de Inventario</span>
+          </div>
+          <button id="sb-sidebar-collapse-btn" class="sb-sidebar-collapse-btn" title="Ocultar menú lateral" aria-label="Ocultar menú lateral">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+          </button>
+        </div>
+
+        <nav class="sb-sidebar-nav">
+          <div class="sb-nav-section-title">Tablas del Inventario</div>
+
+          <!-- 1. Inventario / Materiales -->
+          <a class="sb-nav-link active" data-view="inventory" id="nav-item-inventory">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 10h18M3 14h18m-9-4v8m-7 4h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            <span>Materiales (items)</span>
+            <span class="badge-count" id="count-items-pill">1.700</span>
+          </a>
+
+          <!-- 2. Material en Uso (Antes Salidas) -->
+          <a class="sb-nav-link" data-view="checkouts" id="nav-item-checkouts">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span>Material en Uso (en_uso)</span>
+            <span class="badge-count" id="count-checkouts-pill" style="color:var(--sb-amber);">1</span>
+          </a>
+
+          <!-- 3. Alta de Materiales (Nuevo apartado en el menú) -->
+          <a class="sb-nav-link" data-view="add-item" id="nav-item-add-material">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 4v16m8-8H4"/></svg>
+            <span>Alta de Materiales</span>
+          </a>
+
+          <!-- 4. Registro de Auditoría -->
+          <a class="sb-nav-link" data-view="audit" id="nav-item-audit">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <span>Auditoría (audit_logs)</span>
+            <span class="badge-count" id="count-audit-pill">3</span>
+          </a>
+
+          <!-- 5. Gestión de Profesores (Admin) -->
+          <a class="sb-nav-link admin-only" data-view="teachers" id="nav-item-profiles">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+            <span>Profesores (profiles)</span>
+            <span class="badge-count">2</span>
+          </a>
+
+          <div class="sb-nav-section-title">Instalaciones & Control</div>
+
+          <!-- 6. Visor de Almacenes -->
+          <a class="sb-nav-link" data-view="warehouse" id="nav-item-warehouse">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>
+            <span>Visor de Almacenes</span>
+          </a>
+
+          <!-- 7. Dashboard / Métricas -->
+          <a class="sb-nav-link" data-view="dashboard" id="nav-item-dashboard">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            <span>Métricas & Dashboard</span>
+          </a>
+
+          <!-- 8. Configuración Supabase (Solo Admin) -->
+          <a class="sb-nav-link admin-only" id="nav-item-settings">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            <span>Configuración Supabase</span>
+          </a>
+        </nav>
+      </aside>
+      <div id="sb-sidebar-backdrop" class="sb-sidebar-backdrop"></div>
+
+      <!-- MAIN CANVAS (ÁREA DE CONTENIDO) -->
+      <main class="sb-main-canvas">
+
+        <!-- Pestaña superior activa -->
+        <div class="sb-tab-bar">
+          <div class="sb-tab active">
+            <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 10h18M3 14h18m-9-4v8m-7 4h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            <span id="tab-table-name">public.items</span>
+          </div>
+        </div>
+
+        <!-- ========================================================
+             VISTA 1: TABLA `public.items` (INVENTARIO GENERAL)
+             ======================================================== -->
+        <section id="view-inventory" class="view-panel-container" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+          <div class="sb-table-toolbar">
+            <div class="sb-toolbar-left">
+              <div class="sb-filter-input-wrap">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" id="inv-search-input" class="sb-filter-input" placeholder="Filtrar por id, código, nombre, proveedor...">
+              </div>
+
+              <select id="inv-wh-filter" class="sb-form-select" style="padding: 3px 8px; font-size: 11.5px; height: 30px;">
+                <option value="all">Almacén: Todos</option>
+                <option value="alm-principal">Almacén Principal E.19</option>
+                <option value="alm-forestales">Almacén Forestales E.14</option>
+                <option value="contenedor">Contenedores</option>
+                <option value="garaje">Garaje E.9 (Camión BUP)</option>
+                <option value="sala-coordinacion">Sala de Coordinación E.5</option>
+                <option value="seguridad">Seguridad</option>
+              </select>
+
+              <select id="inv-status-filter" class="sb-form-select" style="padding: 3px 8px; font-size: 11.5px; height: 30px;">
+                <option value="all">Estado: Todos</option>
+                <option value="disponible">disponible</option>
+                <option value="sacado">sacado</option>
+                <option value="extraviado">extraviado</option>
+                <option value="mantenimiento">mantenimiento</option>
+              </select>
+            </div>
+
+            <div class="sb-toolbar-right">
+              <!-- Botón Seleccionar Todos -->
+              <button id="btn-select-all-inv" class="sb-btn sb-btn-subtle" title="Seleccionar todos los materiales visibles">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                <span>Seleccionar Todos</span>
+              </button>
+
+              <!-- Botón Sacar Materiales (Se pone en verde fuerte solo con selección) -->
+              <button id="btn-checkout-selected" class="sb-btn sb-btn-action-checkout" title="Sacar los materiales seleccionados">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                <span>Sacar Materiales</span>
+              </button>
+
+              <!-- Botón Cambiar Estado (Mantenimiento, Fuera de Mantenimiento, Extraviado) -->
+              <div class="sb-dropdown-wrapper" style="position: relative;">
+                <button id="btn-status-dropdown-toggle" class="sb-btn sb-btn-subtle" type="button" title="Cambiar estado de los elementos seleccionados">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                  <span>Estado ▾</span>
+                </button>
+                <div id="status-dropdown-menu" class="sb-dropdown-menu" style="display:none; position:absolute; right:0; top:calc(100% + 5px); min-width:215px; background:#181818; border:1px solid #2e2e2e; border-radius:6px; box-shadow:0 10px 25px rgba(0,0,0,0.7); padding:4px; z-index:999;">
+                  <button id="btn-action-set-maintenance" class="sb-dropdown-menu-item" type="button" style="display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; font-size:12px; color:#38bdf8; background:transparent; border:none; text-align:left; cursor:pointer; border-radius:4px;">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                    <span>En Mantenimiento</span>
+                  </button>
+                  <button id="btn-action-clear-maintenance" class="sb-dropdown-menu-item" type="button" style="display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; font-size:12px; color:#3ecf8e; background:transparent; border:none; text-align:left; cursor:pointer; border-radius:4px;">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <span>Fuera de Mantenimiento</span>
+                  </button>
+                  <div style="height:1px; background:#262626; margin:3px 0;"></div>
+                  <button id="btn-action-set-lost" class="sb-dropdown-menu-item" type="button" style="display:flex; align-items:center; gap:8px; width:100%; padding:7px 10px; font-size:12px; color:#f85149; background:transparent; border:none; text-align:left; cursor:pointer; border-radius:4px;">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                    <span>Marcar como Extraviado</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Botón Borrar Selección (Solo Administrador) -->
+              <button id="btn-delete-selected" class="sb-btn sb-btn-danger-subtle admin-only" title="Eliminar materiales seleccionados (Solo Administrador)">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                <span>Borrar Selección</span>
+              </button>
+
+              <button class="sb-btn sb-btn-subtle" onclick="window.inventoryManager.printInventoryReport()" title="Exportar reporte oficial en PDF">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                <span>Exportar PDF</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="sb-grid-container">
+            <table class="sb-table-grid">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="th-select-all-inv" title="Seleccionar/Deseleccionar todos"></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">id</span><span class="sb-col-type">uuid</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">código</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">nombre</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">estado</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">almacén</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">balda</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">familia</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">proveedor</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">usos</span><span class="sb-col-type">int4</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">responsable_actual</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">ficha</span><span class="sb-col-type">view</span></div></th>
+                </tr>
+              </thead>
+              <tbody id="inv-table-body">
+                <!-- Filas dinámicas -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ========================================================
+             VISTA 2: TABLA `public.en_uso` (MATERIAL ACTUALMENTE EN USO)
+             ======================================================== -->
+        <section id="view-checkouts" class="view-panel-container" style="display: none; flex-direction: column; flex: 1; min-height: 0;">
+          <div class="sb-table-toolbar">
+            <div class="sb-toolbar-left">
+              <div class="sb-filter-input-wrap">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" id="chk-search-input" class="sb-filter-input" placeholder="Filtrar material en uso por profesor, código o vale...">
+              </div>
+            </div>
+
+            <div class="sb-toolbar-right">
+              <!-- Botón Seleccionar Todos en Material en Uso -->
+              <button id="btn-select-all-en-uso" class="sb-btn sb-btn-subtle" title="Seleccionar todo el material en uso">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                <span>Seleccionar Todos</span>
+              </button>
+
+              <!-- Botón Devolver Selección (Se activa en verde fuerte con selección) -->
+              <button id="btn-return-selected" class="sb-btn sb-btn-action-checkout" title="Devolver los materiales seleccionados al inventario">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                <span>Devolver Selección</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="sb-grid-container">
+            <table class="sb-table-grid">
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="th-select-all-en-uso" title="Seleccionar/Deseleccionar todos"></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">albarán_vale</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">material</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">código</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">profesor_responsable</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">motivo_práctica</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">fecha_salida</span><span class="sb-col-type">timestamptz</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">estado</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">acciones</span><span class="sb-col-type">ops</span></div></th>
+                </tr>
+              </thead>
+              <tbody id="active-checkouts-table-body">
+                <!-- Filas dinámicas -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ========================================================
+             VISTA 3: ALTA DE MATERIALES (TABLA INTERACTIVA DE INSERCIÓN)
+             ======================================================== -->
+        <section id="view-add-item" class="view-panel-container sb-view-panel" style="display: none;">
+          <div class="sb-card" style="margin-bottom: 20px;">
+            <div class="sb-card-header">
+              <div class="sb-card-title">Inserción de Fila &bull; public.items</div>
+              <span style="font-size: 11px; color: var(--sb-text-dim);">Introduce los datos en la fila y pulsa Guardar</span>
+            </div>
+
+            <form id="add-item-form">
+              <div style="display: grid; grid-template-columns: 2fr 1.5fr 1.2fr 1fr; gap: 10px; margin-bottom: 10px;">
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Nombre del Material *</label>
+                  <input type="text" id="item-name" class="sb-form-input" placeholder="Ej: Equipo ERA Dräger PSS 5000" required>
+                </div>
+
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Familia Profesional / Rama *</label>
+                  <select id="item-category" class="sb-form-select" required>
+                    <option value="Incendios e Industrial">Incendios e Industrial</option>
+                    <option value="Rescate">Rescate</option>
+                    <option value="Sanitario">Sanitario</option>
+                    <option value="Protección Civil">Protección Civil</option>
+                  </select>
+                </div>
+
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Zona / Almacén *</label>
+                  <select id="item-warehouse" class="sb-form-select" required>
+                    <option value="alm-principal">Almacén Principal E.19</option>
+                    <option value="alm-forestales">Almacén Forestales E.14</option>
+                    <option value="contenedor">Contenedores</option>
+                    <option value="garaje">Garaje E.9 (Camión BUP)</option>
+                    <option value="sala-coordinacion">Sala de Coordinación E.5</option>
+                    <option value="seguridad">Seguridad</option>
+                  </select>
+                </div>
+
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Sección *</label>
+                  <select id="item-shelf" class="sb-form-select" required>
+                    <!-- Opciones dinámicas según la zona/almacén seleccionado -->
+                  </select>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1.2fr 1.5fr 1.2fr 1.5fr; gap: 10px; margin-bottom: 10px;">
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Número de Serie (S/N)</label>
+                  <input type="text" id="item-serial" class="sb-form-input" placeholder="SN-2024-XXXX">
+                </div>
+
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Empresa Proveedora</label>
+                  <input type="text" id="item-supplier" class="sb-form-input" placeholder="Dräger Safety Hispania">
+                </div>
+
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Fecha Fabricación</label>
+                  <input type="date" id="item-mfg-date" class="sb-form-input">
+                </div>
+
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Manual / Ficha PDF (URL)</label>
+                  <input type="url" id="item-doc-url" class="sb-form-input" placeholder="https://...">
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 12px;">
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Observaciones y Mantenimiento</label>
+                  <input type="text" id="item-observations" class="sb-form-input" placeholder="Revisiones periódicas, presiones de trabajo, estado de correas...">
+                </div>
+
+                <div class="sb-form-group" style="margin-bottom: 0;">
+                  <label class="sb-form-label">Fotografía (Archivo o Cámara)</label>
+                  <input type="file" id="item-photo-file" accept="image/*" capture="environment" class="sb-form-input">
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                <button type="submit" class="sb-btn sb-btn-emerald">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                  <span>Insertar Fila en public.items</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- ========================================================
+             VISTA 4: TABLA `public.audit_logs` (SIN CHECKBOXES)
+             ======================================================== -->
+        <section id="view-audit" class="view-panel-container" style="display: none; flex-direction: column; flex: 1; min-height: 0;">
+          <div class="sb-table-toolbar">
+            <div class="sb-toolbar-left">
+              <div class="sb-filter-input-wrap">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" id="audit-search-input" class="sb-filter-input" placeholder="Filtrar logs por usuario, código o acción...">
+              </div>
+
+              <select id="audit-action-filter" class="sb-form-select" style="padding: 3px 8px; font-size: 11.5px; height: 30px;">
+                <option value="all">Acción: Todas</option>
+                <option value="SALIDA">SALIDA</option>
+                <option value="DEVOLUCION">DEVOLUCIÓN</option>
+                <option value="EXTRAVIO">EXTRAVÍO</option>
+                <option value="ALTA">ALTA</option>
+                <option value="BAJA">BAJA</option>
+              </select>
+            </div>
+
+            <div class="sb-toolbar-right">
+              <button class="sb-btn sb-btn-subtle" title="Políticas RLS">
+                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                <span>Seguridad RLS</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- NOTA: SIN COLUMNA DE CHECKBOX EN AUDITORÍA -->
+          <div class="sb-grid-container">
+            <table class="sb-table-grid">
+              <thead>
+                <tr>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">id</span><span class="sb-col-type">uuid</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">usuario</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">correo</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">acción</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">item_id</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">código_material</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">nombre_material</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">detalles_movimiento</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">fecha_hora</span><span class="sb-col-type">timestamptz</span></div></th>
+                </tr>
+              </thead>
+              <tbody id="audit-table-body">
+                <!-- Filas dinámicas sin checkbox -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ========================================================
+             VISTA 5: TABLA `public.profiles` (GESTIÓN PROFESORES)
+             ======================================================== -->
+        <section id="view-teachers" class="view-panel-container admin-only" style="display: none; flex-direction: column; flex: 1; min-height: 0;">
+          <div class="sb-table-toolbar">
+            <div class="sb-toolbar-left">
+              <span style="font-size: 13px; font-weight: 600; color: var(--sb-text-main);">public.profiles &bull; Cuentas del Profesorado</span>
+            </div>
+            <div class="sb-toolbar-right">
+              <button class="sb-btn sb-btn-emerald" onclick="window.app.openModal('add-teacher-modal')">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                <span>+ Crear Cuenta Profesor</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="sb-grid-container">
+            <table class="sb-table-grid">
+              <thead>
+                <tr>
+                  <th><input type="checkbox"></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">id</span><span class="sb-col-type">uuid</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">correo</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">nombre_completo</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">rol</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">departamento</span><span class="sb-col-type">text</span></div></th>
+                  <th><div class="sb-col-header-inner"><span class="sb-col-name">acciones</span><span class="sb-col-type">ops</span></div></th>
+                </tr>
+              </thead>
+              <tbody id="teachers-table-body">
+                <!-- Filas dinámicas -->
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ========================================================
+             VISTA 6: VISOR INTERACTIVO DE ALMACENES Y PLANOS
+             ======================================================== -->
+        <section id="view-warehouse" class="view-panel-container sb-view-panel" style="display: none; flex-direction: column; flex: 1; min-height: 0; padding: 10px 14px; overflow-y: auto;">
+          <div class="sb-card-header" style="flex-wrap: wrap; gap: 10px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--sb-border-subtle);">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="display: inline-flex; width: 8px; height: 8px; border-radius: 50%; background: var(--sb-green); box-shadow: 0 0 8px var(--sb-green);"></span>
+                <div class="sb-card-title" id="map-wh-title" style="font-size: 15px;">Almacén Principal E.19</div>
+                <span id="map-active-zone-badge" class="sb-badge disponible" style="display: none; margin-left: 6px;">
+                  Zona: <strong id="map-active-zone-name" style="margin-left: 4px;">--</strong>
+                </span>
+              </div>
+              <div style="font-size: 11.5px; color: var(--sb-text-dim); margin-top: 2px;" id="map-wh-desc">Equipos de Respiración Autónoma & Intervención</div>
+            </div>
+            <div id="wh-tabs-container" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+          </div>
+
+          <div class="sb-wh-layout">
+            <!-- Columna Izquierda: Mapa Plano Interactivo -->
+            <div class="sb-map-panel">
+              <!-- Canvas / Contenedor de la Imagen con Hotspots -->
+              <div class="sb-interactive-map-wrapper" id="interactive-map-wrapper">
+                <div id="map-canvas-inner" class="sb-map-inner-canvas">
+                  <img id="wh-map-img" src="assets/almacen-principale19.jpg" alt="Plano de almacén" class="sb-wh-map-img">
+                  <div id="wh-map-hotspots-layer" class="sb-wh-hotspots-layer"></div>
+                </div>
+              </div>
+
+              <!-- Selector Rápido de Zonas por Bloques debajo del mapa -->
+              <div class="sb-quick-zones-bar">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <span style="font-size: 11px; font-weight: 600; color: var(--sb-text-dim);">Secciones de esta instalación:</span>
+                  <span id="wh-zones-count-pill" style="font-size: 10.5px; color: var(--sb-text-muted); font-family: var(--sb-font-mono);">0 zonas</span>
+                </div>
+                <div id="wh-zones-pills-container" class="sb-zones-pills-wrap"></div>
+              </div>
+            </div>
+
+            <!-- Columna Derecha: Inspector de Zona / Balda -->
+            <div class="sb-wh-inspector-panel">
+              <div class="sb-inspector-header">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                  <span id="shelf-sector-tag" class="sb-sector-tag">Sector A</span>
+                  <span id="shelf-items-count-badge" class="sb-badge" style="background: rgba(255,255,255,0.06); color: var(--sb-text-muted);">0 recursos</span>
+                </div>
+                <div class="sb-card-title" id="shelf-inspector-title" style="color: var(--sb-green); font-size: 15px; margin-top: 4px;">Balda A.1</div>
+                <div style="font-size: 11px; color: var(--sb-text-dim); margin-top: 2px;" id="shelf-inspector-subtitle">Materiales almacenados</div>
+              </div>
+
+              <!-- Buscador de material en esta balda -->
+              <div style="padding: 8px 10px; border-bottom: 1px solid var(--sb-border-subtle); background: var(--sb-bg-canvas);">
+                <input type="text" id="shelf-search-input" class="sb-filter-input" placeholder="Filtrar en esta zona..." style="width: 100%; height: 28px; font-size: 11px;">
+              </div>
+
+              <!-- Lista de Materiales en la Zona -->
+              <div id="shelf-items-container" class="sb-inspector-items-list"></div>
+
+              <!-- Acciones de la Balda -->
+              <div class="sb-inspector-footer" style="display: flex; flex-direction: column; gap: 6px;">
+                <button id="btn-goto-inventory-filtered" class="sb-btn sb-btn-subtle" style="width: 100%; justify-content: center; font-size: 11.5px;" title="Ver estos materiales en la tabla general con filtros">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 4h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                  <span>Abrir en Inventario General</span>
+                </button>
+                <button id="btn-add-item-in-zone" class="sb-btn sb-btn-emerald" style="width: 100%; justify-content: center; font-size: 11.5px;" title="Registrar un nuevo material ubicado directamente en esta zona">
+                  <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                  <span>+ Añadir Material a esta Zona</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================================================
+             VISTA 7: MÉTRICAS Y ESTADÍSTICAS (DASHBOARD)
+             ======================================================== -->
+        <section id="view-dashboard" class="view-panel-container sb-view-panel" style="display: none;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px;">
+            <div class="sb-card">
+              <div style="font-size: 11px; color: var(--sb-text-muted); font-weight: 500;">TOTAL DE ARTÍCULOS</div>
+              <div id="stat-total-items" style="font-size: 26px; font-weight: 700; color: var(--sb-text-main); margin-top: 4px;">1.700</div>
+              <div style="font-size: 11px; color: var(--sb-green); margin-top: 4px;">&bull; 100% en catálogo</div>
+            </div>
+
+            <div class="sb-card">
+              <div style="font-size: 11px; color: var(--sb-text-muted); font-weight: 500;">DISPONIBLES EN ALMACÉN</div>
+              <div id="stat-available-items" style="font-size: 26px; font-weight: 700; color: var(--sb-green); margin-top: 4px;">0</div>
+              <div style="font-size: 11px; color: var(--sb-text-dim); margin-top: 4px;">Listos para su uso</div>
+            </div>
+
+            <div class="sb-card">
+              <div style="font-size: 11px; color: var(--sb-text-muted); font-weight: 500;">MATERIAL EN USO (FUERA)</div>
+              <div id="stat-taken-items" style="font-size: 26px; font-weight: 700; color: var(--sb-amber); margin-top: 4px;">0</div>
+              <div style="font-size: 11px; color: var(--sb-amber); margin-top: 4px;">⚠️ Verificar fin de turno</div>
+            </div>
+
+            <div class="sb-card">
+              <div style="font-size: 11px; color: var(--sb-text-muted); font-weight: 500;">EXTRAVIADOS / REVISIÓN</div>
+              <div id="stat-lost-items" style="font-size: 26px; font-weight: 700; color: var(--sb-red); margin-top: 4px;">0</div>
+              <div style="font-size: 11px; color: var(--sb-red); margin-top: 4px;">Requieren inspección</div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px;">
+            <div class="sb-card">
+              <div class="sb-card-title" style="margin-bottom: 12px;">Estado por Almacén y Camión</div>
+              <div id="dashboard-wh-quick-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;"></div>
+            </div>
+
+            <div class="sb-card">
+              <div class="sb-card-title" style="margin-bottom: 12px;">Últimos Movimientos Registrados</div>
+              <div id="dashboard-recent-logs" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- STATUSBAR INFERIOR EN ESPAÑOL -->
+        <footer class="sb-statusbar">
+          <div class="sb-statusbar-left">
+            <div class="sb-pagination-controls">
+              <button class="sb-page-arrow" title="Página anterior">&lt;</button>
+              <span id="sb-page-info">Página 1 de 1</span>
+              <button class="sb-page-arrow" title="Página siguiente">&gt;</button>
+            </div>
+            <span>&bull;</span>
+            <span id="sb-row-limit-info">100 filas</span>
+            <span>&bull;</span>
+            <span id="sb-records-count">1.700 registros</span>
+          </div>
+
+          <div class="sb-statusbar-right">
+            <span style="font-weight: 500; color: var(--sb-text-main); cursor: pointer;">Datos</span>
+            <span style="cursor: pointer;" onclick="window.app.openModal('supabase-settings-modal')">Definición SQL</span>
+          </div>
+        </footer>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ========================================================
+       MODALES EN ESPAÑOL
+       ======================================================== -->
+
+  <!-- Modal 1: Salida Colectiva de Materiales Seleccionados -->
+  <div id="bulk-checkout-modal" class="sb-modal-overlay">
+    <div class="sb-modal-dialog">
+      <div class="sb-modal-header">
+        <h3>Autorizar Salida de Materiales Seleccionados</h3>
+        <button class="sb-page-arrow modal-close-btn">&times;</button>
+      </div>
+
+      <div class="sb-modal-body">
+        <form id="bulk-checkout-form">
+          <div style="margin-bottom: 12px;">
+            <label class="sb-form-label">Materiales a retirar:</label>
+            <div id="bulk-checkout-items-list" style="max-height: 140px; overflow-y: auto; background: var(--sb-bg-canvas); border: 1px solid var(--sb-border-subtle); border-radius: 4px; padding: 4px;">
+              <!-- Lista dinámica -->
+            </div>
+          </div>
+
+          <div class="sb-form-group">
+            <label class="sb-form-label">Profesor / Responsable que retira *</label>
+            <input type="text" id="bulk-borrower-name" class="sb-form-input" placeholder="Nombre y apellidos" required>
+          </div>
+
+          <div class="sb-form-group">
+            <label class="sb-form-label">Correo institucional (@murciaeduca.es)</label>
+            <input type="email" id="bulk-borrower-email" class="sb-form-input" placeholder="ejemplo@murciaeduca.es">
+          </div>
+
+          <div class="sb-form-group">
+            <label class="sb-form-label">Motivo de Extracción / Práctica *</label>
+            <input type="text" id="bulk-purpose" class="sb-form-input" placeholder="Práctica de intervención en humos" required value="Práctica docente con alumnado">
+          </div>
+
+          <div class="sb-modal-footer" style="padding: 12px 0 0 0; background: transparent; border-top: none;">
+            <button type="button" class="sb-btn sb-btn-subtle" onclick="window.app.closeModal('bulk-checkout-modal')">Cancelar</button>
+            <button type="submit" class="sb-btn sb-btn-emerald">Confirmar Salida y Emitir Vale</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: Ficha Técnica de Material -->
+  <div id="item-detail-modal" class="sb-modal-overlay">
+    <div class="sb-modal-dialog">
+      <div class="sb-modal-header">
+        <div>
+          <h3 id="modal-item-title">Detalles de Ficha &bull; public.items</h3>
+          <span id="modal-item-code" style="font-family: var(--sb-font-mono); font-size: 11px; color: var(--sb-green);">ALM1-A1-001</span>
+        </div>
+        <button class="sb-page-arrow modal-close-btn" style="font-size: 16px;">&times;</button>
+      </div>
+
+      <div class="sb-modal-body">
+        <div style="display: flex; gap: 14px; margin-bottom: 14px;">
+          <div style="flex: 1; font-size: 12.5px; line-height: 1.6;">
+            <div id="modal-item-status-box" style="margin-bottom: 8px;"></div>
+            <div><span style="color:var(--sb-text-dim)">Familia:</span> <span id="modal-item-category">Incendios</span></div>
+            <div><span style="color:var(--sb-text-dim)">Ubicación:</span> <span id="modal-item-location">alm-1 (Balda A.1)</span></div>
+            <div><span style="color:var(--sb-text-dim)">Nº de Serie:</span> <span id="modal-item-serial" style="font-family:var(--sb-font-mono);">SN-001</span></div>
+            <div><span style="color:var(--sb-text-dim)">Proveedor:</span> <span id="modal-item-supplier">Dräger Hispania</span></div>
+            <div><span style="color:var(--sb-text-dim)">Fabricación:</span> <span id="modal-item-mfg">2023-02-10</span> &bull; <span style="color:var(--sb-text-dim)">Alta:</span> <span id="modal-item-use-date">2023-03-01</span></div>
+            <div><span style="color:var(--sb-text-dim)">Usos totales:</span> <span id="modal-item-uses-count" style="font-weight:600; color:var(--sb-green);">18</span></div>
+          </div>
+
+          <div style="width: 130px; height: 130px; border: 1px solid var(--sb-border-default); border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--sb-bg-canvas);">
+            <img id="modal-item-image" src="" alt="Foto" style="width: 100%; height: 100%; object-fit: cover; display: none;">
+            <span id="modal-item-placeholder" style="font-size: 10px; color: var(--sb-text-dim); text-align: center;">Sin fotografía</span>
+          </div>
+        </div>
+
+        <div style="background: var(--sb-bg-canvas); border: 1px solid var(--sb-border-subtle); padding: 10px; border-radius: 4px; margin-bottom: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 600; color: var(--sb-text-muted);">OBSERVACIONES TÉCNICAS:</span>
+            <button id="btn-edit-modal-observations" type="button" class="sb-btn sb-btn-subtle" style="padding: 2px 8px; font-size: 10.5px;" title="Editar observaciones técnicas">
+              <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+              <span>Editar</span>
+            </button>
+          </div>
+          <div id="modal-item-observations" style="font-size: 12px; color: var(--sb-text-main); white-space: pre-wrap;">Sin observaciones.</div>
+          <div id="modal-observations-edit-box" style="display: none;">
+            <textarea id="modal-observations-textarea" class="sb-form-input" rows="3" style="width: 100%; resize: vertical; font-size: 12px; margin-bottom: 8px;" placeholder="Escribe aquí las observaciones técnicas, revisiones o incidencias..."></textarea>
+            <div style="display: flex; justify-content: flex-end; gap: 6px;">
+              <button id="btn-cancel-modal-observations" type="button" class="sb-btn sb-btn-subtle" style="padding: 3px 10px; font-size: 11px;">Cancelar</button>
+              <button id="btn-save-modal-observations" type="button" class="sb-btn sb-btn-emerald" style="padding: 3px 10px; font-size: 11px;">Guardar Observaciones</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size: 11px; font-weight: 600; color: var(--sb-text-muted); margin-bottom: 6px;">CRONOGRAMA E HISTORIAL DE USOS:</div>
+          <div id="modal-item-timeline" style="max-height: 140px; overflow-y: auto;"></div>
+        </div>
+      </div>
+
+      <div class="sb-modal-footer">
+        <a id="modal-item-doc-link" href="#" target="_blank" class="sb-btn sb-btn-subtle" style="display: none; margin-right: auto;">
+          Ver Ficha Técnica PDF
+        </a>
+        <button class="sb-btn sb-btn-subtle" onclick="window.inventoryManager.closeModal('item-detail-modal')">Cerrar</button>
+        <button id="modal-item-action-btn" class="sb-btn sb-btn-emerald">Sacar Material</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: Configuración Supabase (Solo Admin) -->
+  <div id="supabase-settings-modal" class="sb-modal-overlay">
+    <div class="sb-modal-dialog">
+      <div class="sb-modal-header">
+        <h3>Conexión con Proyecto Supabase</h3>
+        <button class="sb-page-arrow modal-close-btn">&times;</button>
+      </div>
+
+      <div class="sb-modal-body">
+        <p style="font-size: 12.5px; color: var(--sb-text-muted); margin-bottom: 14px;">
+          KRONOS opera exclusivamente conectado a la base de datos de <b>Supabase</b>. Introduce tu <code>Project URL</code> y tu <code>anon public API key</code>.
+        </p>
+
+        <form id="supabase-config-form">
+          <div class="sb-form-group">
+            <label class="sb-form-label">Project URL de Supabase</label>
+            <input type="url" id="supabase-url-input" class="sb-form-input" placeholder="https://xyzproject.supabase.co" required>
+          </div>
+
+          <div class="sb-form-group">
+            <label class="sb-form-label">Anon / Public API Key</label>
+            <input type="text" id="supabase-key-input" class="sb-form-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." required>
+          </div>
+
+          <div style="background: var(--sb-bg-canvas); border: 1px solid var(--sb-border-subtle); padding: 10px; border-radius: 4px; margin-bottom: 14px;">
+            <div style="font-size: 11.5px; font-weight: 600; color: var(--sb-green); margin-bottom: 4px;">ESQUEMA SQL SUPABASE:</div>
+            <div style="font-size: 11px; color: var(--sb-text-dim);">
+              Ejecuta <code>supabase-schema.sql</code> en el SQL Editor de Supabase para inicializar las tablas y políticas RLS.
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 8px;">
+            <button type="button" id="btn-test-supabase" class="sb-btn sb-btn-subtle">
+              Probar Conexión
+            </button>
+            <button type="submit" class="sb-btn sb-btn-emerald">
+              Guardar y Conectar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: Alta de Profesor (Admin) -->
+  <div id="add-teacher-modal" class="sb-modal-overlay">
+    <div class="sb-modal-dialog">
+      <div class="sb-modal-header">
+        <h3>Alta de Usuario &bull; public.profiles</h3>
+        <button class="sb-page-arrow modal-close-btn">&times;</button>
+      </div>
+      <div class="sb-modal-body">
+        <form id="add-teacher-form">
+          <div class="sb-form-group">
+            <label class="sb-form-label">Nombre y Apellidos *</label>
+            <input type="text" id="teacher-name" class="sb-form-input" placeholder="Ej: María Gómez" required>
+          </div>
+          <div class="sb-form-group">
+            <label class="sb-form-label">Correo institucional (@murciaeduca.es) *</label>
+            <input type="email" id="teacher-email" class="sb-form-input" placeholder="maria.gomez@murciaeduca.es" required>
+          </div>
+          <div class="sb-form-group">
+            <label class="sb-form-label">Departamento</label>
+            <input type="text" id="teacher-dept" class="sb-form-input" value="Emergencias y Protección Civil">
+          </div>
+          <div class="sb-form-group">
+            <label class="sb-form-label">Contraseña de Acceso *</label>
+            <input type="password" id="teacher-password" class="sb-form-input" placeholder="••••••••" required>
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;">
+            <button type="button" class="sb-btn sb-btn-subtle" onclick="window.app.closeModal('add-teacher-modal')">Cancelar</button>
+            <button type="submit" class="sb-btn sb-btn-emerald">Guardar Profesor</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/supabase-client.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/warehouse-map.js"></script>
+  <script src="js/inventory.js"></script>
+  <script src="js/checkouts.js"></script>
+  <script src="js/audit.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
