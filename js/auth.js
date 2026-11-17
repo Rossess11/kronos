@@ -171,10 +171,18 @@ class AuthService {
 
       if (userDeptElem) {
         userDeptElem.textContent = this.currentUser.department || 'Emergencias y Protección Civil';
-        userDeptElem.style.display = 'inline-flex';
       }
 
       adminOnlyElements.forEach(elem => {
+        if (elem.classList.contains('view-panel-container')) {
+          if (!this.isAdmin()) {
+            elem.style.display = 'none';
+          } else {
+            const activeView = window.app ? window.app.currentView : 'inventory';
+            elem.style.display = (elem.id === `view-${activeView}`) ? 'flex' : 'none';
+          }
+          return;
+        }
         elem.style.display = this.isAdmin() ? (elem.tagName === 'A' || elem.tagName === 'BUTTON' ? 'flex' : 'block') : 'none';
       });
 
