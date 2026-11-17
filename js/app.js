@@ -521,14 +521,21 @@ class App {
     // Formulario de Alta de Profesor
     const addTeacherForm = document.getElementById('add-teacher-form');
     if (addTeacherForm) {
-      addTeacherForm.addEventListener('submit', (e) => {
+      addTeacherForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const email = document.getElementById('teacher-email').value;
         const fullName = document.getElementById('teacher-name').value;
         const dept = document.getElementById('teacher-dept').value;
         const pass = document.getElementById('teacher-password').value;
+        const submitBtn = addTeacherForm.querySelector('button[type="submit"]');
+        const prevBtnText = submitBtn ? submitBtn.textContent : '';
 
-        const res = window.store.addUser({
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Guardando en Supabase...';
+        }
+
+        const res = await window.store.addUser({
           email,
           full_name: fullName,
           department: dept,
@@ -536,13 +543,21 @@ class App {
           role: 'profesor'
         });
 
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = prevBtnText;
+        }
+
         if (res.success) {
-          this.showToast(`Profesor dado de alta con éxito: ${fullName}`, 'success');
+          this.showToast(`Profesor guardado en Supabase: ${fullName}`, 'success');
+          if (res.warning) {
+            this.showToast(res.warning, 'warning');
+          }
           addTeacherForm.reset();
           this.closeModal('add-teacher-modal');
           this.renderUsersList();
         } else {
-          alert(res.message);
+          alert(res.message || 'No se pudo crear el usuario en Supabase.');
         }
       });
     }
@@ -700,11 +715,17 @@ class App {
 
       const delBtn = tr.querySelector('.btn-del-user');
       if (delBtn) {
-        delBtn.addEventListener('click', () => {
+        delBtn.addEventListener('click', async () => {
           if (confirm(`¿Eliminar la cuenta del profesor "${u.full_name}"?`)) {
-            window.store.deleteUser(u.id);
-            this.showToast('Cuenta eliminada', 'warning');
-            this.renderUsersList();
+            delBtn.disabled = true;
+            const res = await window.store.deleteUser(u.id);
+            delBtn.disabled = false;
+            if (res && res.success) {
+              this.showToast('Cuenta eliminada de Supabase', 'warning');
+              this.renderUsersList();
+            } else {
+              alert((res && res.message) || 'No se pudo eliminar el usuario en Supabase.');
+            }
           }
         });
       }

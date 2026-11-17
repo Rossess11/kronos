@@ -1622,7 +1622,7 @@ class Store {
   }
 
   // --- GESTIÓN DE PROFESORES / USUARIOS ---
-  addUser(userData) {
+  async addUser(userData) {
     if (!this.requireSupabase()) return { success: false, message: 'Sin conexión con Supabase' };
     const cleanEmail = userData.email.trim().toLowerCase();
     if (!cleanEmail.endsWith('@murciaeduca.es')) {
@@ -1632,65 +1632,140 @@ class Store {
       return { success: false, message: 'Ya existe un usuario con este correo electrónico' };
     }
 
-    const newUser = {
+    const basePayload = {
       id: this.generateUUID(),
       email: cleanEmail,
-      password: userData.password || 'murciaeduca123',
       full_name: userData.full_name.trim(),
       role: userData.role || 'profesor',
       department: userData.department || 'Emergencias y Protección Civil'
     };
-
-    this.users.push(newUser);
-    this.saveToStorage();
-
-    this.addAuditLog('USUARIO', newUser.role.toUpperCase(), newUser.full_name, `Cuenta dada de alta por el Administrador (${newUser.email})`, newUser.id);
+    const rawPassword = userData.password || 'murciaeduca123';
 
     const client = window.supabaseService.client;
-    client.from('profiles').insert([{
-      id: newUser.id,
-      email: newUser.email,
-      full_name: newUser.full_name,
-      role: newUser.role,
-      department: newUser.department,
-      password: newUser.password
-    }]).then(({ error }) => {
-      if (error && error.code === '42703') {
-        // Si la tabla profiles aún no tiene columna password, reintentar sin ella
-        client.from('profiles').insert([{
-          id: newUser.id,
-          email: newUser.email,
-          full_name: newUser.full_name,
-          role: newUser.role,
-          department: newUser.department
-        }]).then(({ error: retryErr }) => {
-          if (retryErr) console.error('Error guardando perfil en Supabase:', retryErr);
-        });
-      } else if (error) {
-        console.error('Error guardando perfil en Supabase:', error);
-      }
-    });
+    let missingPasswordColumn = false;
+    let authConfirmed = false;
+    let authWarning = '';
 
-    return { success: true, user: newUser };
+    // 1. Intentar insertar en public.profiles (con columna password si existe)
+    let { data: insertedRow, error } = await client
+      .from('profiles')
+      .insert([{ ...basePayload, password: rawPassword }])
+      .select()
+      .maybeSingle();
+
+    const isMissingPwdCol = (err) => {
+      if (!err) return false;
+      const msg = (err.message || '').toLowerCase();
+      return err.code === '42703' || err.code === 'PGRST204' || (msg.includes('password') && (msg.includes('column') || msg.includes('schema cache')));
+    };
+
+    // 2. Si falta la columna password en public.profiles (PGRST204 / 42703), reintentar sin ella
+    if (error && isMissingPwdCol(error)) {
+      missingPasswordColumn = true;
+      const retryRes = await client
+        .from('profiles')
+        .insert([basePayload])
+        .select()
+        .maybeSingle();
+      insertedRow = retryRes.data;
+      error = retryRes.error;
+    }
+
+    // 3. Si falla por clave foránea a auth.users (23503) o si falta columna password, registrar en Supabase Auth sin alterar la sesión del admin
+    if ((error && error.code === '23503') || (!error && missingPasswordColumn)) {
+      try {
+        const tempClient = window.supabase.createClient(
+          window.supabaseService.url,
+          window.supabaseService.anonKey,
+          { auth: { persistSession: false, autoRefreshToken: false } }
+        );
+        const { data: signUpData, error: signUpErr } = await tempClient.auth.signUp({
+          email: basePayload.email,
+          password: rawPassword,
+          options: {
+            data: {
+              full_name: basePayload.full_name,
+              role: basePayload.role,
+              department: basePayload.department
+            }
+          }
+        });
+
+        if (!signUpErr && signUpData && signUpData.user) {
+          authConfirmed = !!signUpData.session;
+          if (error && error.code === '23503') {
+            // Reintentar vinculando el UUID generado por auth.users
+            const fkPayload = { ...basePayload, id: signUpData.user.id };
+            const fkRes = await client.from('profiles').upsert([fkPayload]).select().maybeSingle();
+            insertedRow = fkRes.data;
+            error = fkRes.error;
+          } else if (insertedRow && insertedRow.id) {
+            await client.from('profiles').update({ auth_id: signUpData.user.id }).eq('id', insertedRow.id);
+          }
+        } else if (signUpErr) {
+          authWarning = signUpErr.message || '';
+        }
+      } catch (authEx) {
+        authWarning = authEx.message || '';
+      }
+    }
+
+    if (error) {
+      console.error('Error guardando perfil en Supabase:', error);
+      if (error.code === '23505') {
+        return { success: false, message: 'Ese correo electrónico ya existe en la tabla public.profiles de Supabase.' };
+      }
+      return {
+        success: false,
+        message: `No se pudo guardar el usuario en Supabase (${error.code || 'Error BD'}): ${error.message}`
+      };
+    }
+
+    const savedUser = {
+      id: (insertedRow && insertedRow.id) || basePayload.id,
+      email: (insertedRow && insertedRow.email) || basePayload.email,
+      full_name: (insertedRow && insertedRow.full_name) || basePayload.full_name,
+      role: (insertedRow && insertedRow.role) || basePayload.role,
+      department: (insertedRow && insertedRow.department) || basePayload.department,
+      password: missingPasswordColumn ? null : rawPassword
+    };
+
+    this.users.push(savedUser);
+    this.saveToStorage();
+    this.addAuditLog('USUARIO', savedUser.role.toUpperCase(), savedUser.full_name, `Cuenta dada de alta por el Administrador (${savedUser.email})`, savedUser.id);
+
+    let warning = '';
+    if (missingPasswordColumn && !authConfirmed) {
+      warning = authWarning
+        ? `Usuario guardado en public.profiles, pero falta la columna "password" (${authWarning}). Ejecuta en Supabase SQL: ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS password TEXT;`
+        : 'Usuario guardado en public.profiles. Si el login falla por confirmación de email, ejecuta en Supabase SQL: ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS password TEXT;';
+    }
+
+    return { success: true, user: savedUser, warning };
   }
 
-  deleteUser(userId) {
+  async deleteUser(userId) {
     if (!this.requireSupabase()) return { success: false, message: 'Sin conexión con Supabase' };
     const user = this.users.find(u => u.id === userId);
-    if (!user) return false;
+    if (!user) return { success: false, message: 'Usuario no encontrado' };
     if (user.role === 'admin' && this.users.filter(u => u.role === 'admin').length <= 1) {
       return { success: false, message: 'No se puede eliminar el único Administrador' };
+    }
+
+    if (this.isValidUUID(userId)) {
+      const { error } = await window.supabaseService.client
+        .from('profiles')
+        .delete()
+        .eq('id', userId);
+      if (error) {
+        console.error('Error eliminando perfil en Supabase:', error);
+        return { success: false, message: `Error al eliminar usuario en Supabase: ${error.message}` };
+      }
     }
 
     this.users = this.users.filter(u => u.id !== userId);
     this.saveToStorage();
     this.addAuditLog('USUARIO', 'BAJA', user.full_name, `Cuenta eliminada (${user.email})`, user.id);
-
-    if (this.isValidUUID(userId)) {
-      window.supabaseService.client.from('profiles').delete().eq('id', userId).then(({ error }) => {
-        if (error) console.error('Error eliminando perfil en Supabase:', error);
-      });
-    }
     return { success: true };
   }
 
