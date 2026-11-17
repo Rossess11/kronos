@@ -139,6 +139,15 @@ class CheckoutsManager {
         ? '<span class="sb-badge mantenimiento">en mantenimiento</span>' 
         : '<span class="sb-badge sacado">en uso</span>';
 
+      let formattedTime = chk.checkout_time || '';
+      if (typeof formattedTime === 'string' && formattedTime.includes('T')) {
+        const d = new Date(formattedTime);
+        if (!isNaN(d.getTime())) {
+          const pad = (n) => String(n).padStart(2, '0');
+          formattedTime = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+      }
+
       tr.innerHTML = `
         <td><input type="checkbox" class="chk-row-checkbox" data-id="${chk.id}" ${isChecked ? 'checked' : ''}></td>
         <td style="font-family:var(--sb-font-mono); font-size:11.5px; color:var(--sb-amber); font-weight:500;">
@@ -148,7 +157,7 @@ class CheckoutsManager {
         <td style="font-family:var(--sb-font-mono); font-size:11.5px; color:var(--sb-green);">${chk.item_code}</td>
         <td style="font-weight:500; color:var(--sb-text-main);">${chk.borrower_name}</td>
         <td style="color:var(--sb-text-muted); font-size:12px;">${chk.purpose}</td>
-        <td style="font-family:var(--sb-font-mono); font-size:11px; color:var(--sb-text-dim);">${chk.checkout_time}</td>
+        <td style="font-family:var(--sb-font-mono); font-size:11px; color:var(--sb-text-dim);">${formattedTime}</td>
         <td>
           ${statusBadge}
         </td>

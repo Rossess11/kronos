@@ -32,6 +32,19 @@
         <p>CIFP Hespérides &bull; Control y Gestión de Materiales</p>
       </div>
 
+      <!-- Estado de Conexión Obligatoria a Supabase -->
+      <div id="login-db-status-box" style="background: var(--sb-bg-canvas); border: 1px solid var(--sb-border-default); border-radius: 4px; padding: 10px 12px; margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <span id="login-db-status-text" style="font-size: 11.5px; font-weight: 600; color: var(--sb-text-muted);">
+            Verificando conexión con Supabase...
+          </span>
+          <button type="button" id="btn-login-config-supabase" class="sb-btn sb-btn-subtle" style="padding: 3px 8px; font-size: 11px;">
+            Conectar BD
+          </button>
+        </div>
+        <div id="login-db-error-detail" style="font-size: 11px; color: #f85149; margin-top: 4px; display: none;"></div>
+      </div>
+
       <form id="login-form">
         <div class="sb-form-group">
           <label class="sb-form-label">Correo institucional (@murciaeduca.es)</label>
@@ -43,7 +56,7 @@
           <input type="password" id="login-password" class="sb-form-input" placeholder="••••••••" required autocomplete="current-password">
         </div>
 
-        <button type="submit" class="sb-btn sb-btn-emerald" style="width: 100%; padding: 8px; font-size: 13px;">
+        <button type="submit" id="btn-login-submit" class="sb-btn sb-btn-emerald" style="width: 100%; padding: 8px; font-size: 13px;">
           Iniciar Sesión en KRONOS
         </button>
       </form>
@@ -478,13 +491,21 @@
                 <option value="all">Acción: Todas</option>
                 <option value="SALIDA">SALIDA</option>
                 <option value="DEVOLUCION">DEVOLUCIÓN</option>
+                <option value="MANTENIMIENTO">MANTENIMIENTO</option>
+                <option value="FIN_MANTENIMIENTO">FIN MANTENIMIENTO</option>
+                <option value="MODIFICACION">MODIFICACIÓN</option>
                 <option value="EXTRAVIO">EXTRAVÍO</option>
                 <option value="ALTA">ALTA</option>
                 <option value="BAJA">BAJA</option>
+                <option value="LOGIN">ACCESO</option>
               </select>
             </div>
 
             <div class="sb-toolbar-right">
+              <button id="btn-refresh-audit-logs" class="sb-btn sb-btn-subtle" title="Sincronizar registros compartidos desde la base de datos">
+                <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                <span>Sincronizar BD</span>
+              </button>
               <button class="sb-btn sb-btn-subtle" title="Políticas RLS">
                 <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
                 <span>Seguridad RLS</span>
@@ -799,8 +820,8 @@
     </div>
   </div>
 
-  <!-- Modal 3: Configuración Supabase (Solo Admin) -->
-  <div id="supabase-settings-modal" class="sb-modal-overlay">
+  <!-- Modal 3: Configuración Supabase (Oculta credenciales predeterminadas) -->
+  <div id="supabase-settings-modal" class="sb-modal-overlay" style="z-index: 2500;">
     <div class="sb-modal-dialog">
       <div class="sb-modal-header">
         <h3>Conexión con Proyecto Supabase</h3>
@@ -808,29 +829,29 @@
       </div>
 
       <div class="sb-modal-body">
+        <div id="supabase-config-source-badge" style="background: rgba(62, 207, 142, 0.08); border: 1px solid rgba(62, 207, 142, 0.3); padding: 10px 12px; border-radius: 4px; margin-bottom: 14px; font-size: 12px; color: var(--sb-text-primary);">
+          Comprobando estado de credenciales...
+        </div>
+
         <p style="font-size: 12.5px; color: var(--sb-text-muted); margin-bottom: 14px;">
-          KRONOS opera exclusivamente conectado a la base de datos de <b>Supabase</b>. Introduce tu <code>Project URL</code> y tu <code>anon public API key</code>.
+          KRONOS se conecta automáticamente usando la configuración integrada. Solo rellena estos campos si necesitas sobrescribir la conexión en este dispositivo.
         </p>
 
         <form id="supabase-config-form">
           <div class="sb-form-group">
-            <label class="sb-form-label">Project URL de Supabase</label>
-            <input type="url" id="supabase-url-input" class="sb-form-input" placeholder="https://xyzproject.supabase.co" required>
+            <label class="sb-form-label">Project URL de Supabase (Opcional / Sobrescribir)</label>
+            <input type="password" id="supabase-url-input" class="sb-form-input" autocomplete="off" placeholder="••••••••••••••••••••••••••••••">
           </div>
 
           <div class="sb-form-group">
-            <label class="sb-form-label">Anon / Public API Key</label>
-            <input type="text" id="supabase-key-input" class="sb-form-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." required>
+            <label class="sb-form-label">Anon / Public API Key (Opcional / Sobrescribir)</label>
+            <input type="password" id="supabase-key-input" class="sb-form-input" autocomplete="off" placeholder="••••••••••••••••••••••••••••••">
           </div>
 
-          <div style="background: var(--sb-bg-canvas); border: 1px solid var(--sb-border-subtle); padding: 10px; border-radius: 4px; margin-bottom: 14px;">
-            <div style="font-size: 11.5px; font-weight: 600; color: var(--sb-green); margin-bottom: 4px;">ESQUEMA SQL SUPABASE:</div>
-            <div style="font-size: 11px; color: var(--sb-text-dim);">
-              Ejecuta <code>supabase-schema.sql</code> en el SQL Editor de Supabase para inicializar las tablas y políticas RLS.
-            </div>
-          </div>
-
-          <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-bottom: 14px;">
+            <button type="button" id="btn-reset-supabase-default" class="sb-btn sb-btn-subtle" style="display: none; margin-right: auto;">
+              Restaurar Predeterminada
+            </button>
             <button type="button" id="btn-test-supabase" class="sb-btn sb-btn-subtle">
               Probar Conexión
             </button>
@@ -839,6 +860,25 @@
             </button>
           </div>
         </form>
+
+        <details id="supabase-obfuscator-drawer" style="background: var(--sb-bg-canvas); border: 1px solid var(--sb-border-subtle); padding: 10px 12px; border-radius: 4px;">
+          <summary style="cursor: pointer; font-size: 11.5px; font-weight: 600; color: var(--sb-green);">
+            Ocultar credenciales predeterminadas para GitHub Pages
+          </summary>
+          <div style="margin-top: 10px; font-size: 11px; color: var(--sb-text-dim); line-height: 1.5;">
+            Genera aquí el bloque cifrado (XOR) para pegarlo en <code>js/supabase-client.js</code> (<code>KRONOS_DEFAULT_CLOUD_CFG</code>) sin exponer la URL ni la clave en texto plano en GitHub. Usa siempre únicamente la <b>anon public key</b> con políticas <b>RLS</b> activas en Supabase.
+          </div>
+          <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 6px;">
+            <input type="url" id="obf-url-input" class="sb-form-input" placeholder="https://tuproyecto.supabase.co" style="font-size: 11.5px;">
+            <input type="password" id="obf-key-input" class="sb-form-input" placeholder="Anon / Public API Key (eyJ...)" style="font-size: 11.5px;">
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button type="button" id="btn-generate-obfuscated" class="sb-btn sb-btn-subtle" style="font-size: 11px; padding: 4px 10px;">
+                Generar Código Oculto
+              </button>
+            </div>
+            <textarea id="obf-output-code" class="sb-form-input" rows="4" readonly style="display: none; font-family: var(--sb-font-mono); font-size: 10.5px; resize: vertical;"></textarea>
+          </div>
+        </details>
       </div>
     </div>
   </div>

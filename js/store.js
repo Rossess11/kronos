@@ -664,35 +664,40 @@ class Store {
     this.users = [];
     this.currentUser = null;
     this.onlineUsersCount = 1;
+    this._realtimeSubscribed = false;
+    this._syncInFlight = null;
 
     this.init();
   }
 
-  init() {
-    // Cargar datos locales de persistencia
-    const localItems = localStorage.getItem('kronos_items');
-    this.items = localItems ? JSON.parse(localItems) : INITIAL_ITEMS;
-
-    const localCheckouts = localStorage.getItem('kronos_checkouts');
-    this.checkouts = localCheckouts ? JSON.parse(localCheckouts) : INITIAL_CHECKOUTS;
-
-    const localAudit = localStorage.getItem('kronos_audit');
-    this.auditLogs = localAudit ? JSON.parse(localAudit) : INITIAL_AUDIT_LOGS;
-
-    const localUsers = localStorage.getItem('kronos_users');
-    this.users = localUsers ? JSON.parse(localUsers) : [
-      { id: 'usr-admin', email: 'admin@murciaeduca.es', password: 'admin', full_name: 'Javier Coordinador Logística', role: 'admin', department: 'Jefatura de Materiales CIFP' },
-      { id: 'usr-prof', email: 'profesor@murciaeduca.es', password: 'profe', full_name: 'Carlos Pérez', role: 'profesor', department: 'Emergencias y Protección Civil' }
-    ];
-
-    // Migrar automáticamente cuentas heredadas de @carm.es a @murciaeduca.es
-    this.users.forEach(u => {
-      if (u.email && u.email.endsWith('@carm.es')) {
-        u.email = u.email.replace(/@carm\.es$/i, '@murciaeduca.es');
-      }
+  generateUUID() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
     });
+  }
 
-    // Cargar sesión activa
+  isValidUUID(str) {
+    return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+  }
+
+  init() {
+    // MODO SUPABASE ESTRICTO: eliminar cachés locales de datos y operar solo desde la nube
+    localStorage.removeItem('kronos_items');
+    localStorage.removeItem('kronos_checkouts');
+    localStorage.removeItem('kronos_audit');
+    localStorage.removeItem('kronos_users');
+
+    this.items = [];
+    this.checkouts = [];
+    this.auditLogs = [];
+    this.users = [];
+
+    // Cargar sesión activa únicamente para revalidarla contra Supabase al arrancar
     const session = localStorage.getItem('kronos_session');
     if (session) {
       try {
@@ -706,14 +711,9 @@ class Store {
     }
 
     this.saveToStorage();
-    this.trySupabaseSync();
   }
 
   saveToStorage() {
-    localStorage.setItem('kronos_items', JSON.stringify(this.items));
-    localStorage.setItem('kronos_checkouts', JSON.stringify(this.checkouts));
-    localStorage.setItem('kronos_audit', JSON.stringify(this.auditLogs));
-    localStorage.setItem('kronos_users', JSON.stringify(this.users));
     if (this.currentUser) {
       localStorage.setItem('kronos_session', JSON.stringify(this.currentUser));
     } else {
@@ -721,20 +721,169 @@ class Store {
     }
   }
 
-  async trySupabaseSync() {
-    if (window.supabaseService && window.supabaseService.isOnline()) {
-      try {
-        const client = window.supabaseService.client;
-        const { data: dbItems, error } = await client.from('items').select('*');
-        if (!error && dbItems && dbItems.length > 0) {
-          // Fusionar con datos en la nube
-          this.items = dbItems;
-          this.saveToStorage();
+  requireSupabase() {
+    if (!window.supabaseService || !window.supabaseService.isOnline()) {
+      const msg = 'Sin conexión con Supabase. La aplicación no opera en modo local.';
+      if (window.app) {
+        window.app.showToast(msg, 'error');
+        if (typeof window.app.enforceSupabaseGate === 'function') {
+          window.app.enforceSupabaseGate();
         }
-      } catch (err) {
-        console.warn('Sync de Supabase aplazado (offline/error):', err);
       }
+      return false;
     }
+    return true;
+  }
+
+  refreshAllActiveViews() {
+    if (window.inventoryManager) window.inventoryManager.renderTable();
+    if (window.checkoutsManager) window.checkoutsManager.renderActiveCheckoutsTable();
+    if (window.auditManager) window.auditManager.renderLogs();
+    if (window.warehouseMapViewer && window.app && window.app.currentView === 'warehouse') {
+      window.warehouseMapViewer.renderWarehouseView(window.warehouseMapViewer.currentWarehouseId);
+    }
+    if (window.app) {
+      window.app.updateDashboardStats();
+      window.app.renderUsersList();
+    }
+  }
+
+  setupRealtimeSubscription() {
+    if (!window.supabaseService || !window.supabaseService.isOnline()) return;
+    if (this._realtimeSubscribed) return;
+
+    const client = window.supabaseService.client;
+    if (!client || typeof client.channel !== 'function') return;
+
+    try {
+      this._realtimeSubscribed = true;
+      this._realtimeChannel = client
+        .channel('kronos-shared-sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'audit_logs' }, (payload) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            if (!this.auditLogs.some(l => l.id === payload.new.id)) {
+              this.auditLogs.unshift(payload.new);
+              this.saveToStorage();
+              if (window.auditManager) window.auditManager.renderLogs();
+              if (window.app) window.app.updateDashboardStats();
+            }
+          } else {
+            this.trySupabaseSync(false);
+          }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => {
+          this.trySupabaseSync(false);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'checkouts' }, () => {
+          this.trySupabaseSync(false);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+          this.trySupabaseSync(false);
+        })
+        .subscribe();
+    } catch (err) {
+      console.warn('No se pudo suscribir a Realtime de Supabase:', err);
+    }
+  }
+
+  async trySupabaseSync(forceToast = false) {
+    if (!window.supabaseService) return false;
+    if (this._syncInFlight) return this._syncInFlight;
+
+    this._syncInFlight = (async () => {
+      try {
+        if (!window.supabaseService.isOnline()) {
+          const verified = await window.supabaseService.verifyLiveConnection();
+          if (!verified) {
+            this.items = [];
+            this.checkouts = [];
+            this.auditLogs = [];
+            this.users = [];
+            this.refreshAllActiveViews();
+            if (window.app && typeof window.app.updateDbStatusChip === 'function') {
+              window.app.updateDbStatusChip();
+            }
+            return false;
+          }
+        }
+
+        const client = window.supabaseService.client;
+
+        // 1. Sincronizar Inventario (items)
+        const { data: dbItems, error: itemsErr } = await client
+          .from('items')
+          .select('*')
+          .order('code', { ascending: true });
+
+        if (itemsErr) throw itemsErr;
+        this.items = Array.isArray(dbItems) ? dbItems : [];
+
+        // 2. Sincronizar Material en Uso (checkouts)
+        const { data: dbCheckouts, error: chkErr } = await client
+          .from('checkouts')
+          .select('*')
+          .order('checkout_time', { ascending: false });
+
+        if (chkErr) throw chkErr;
+        this.checkouts = Array.isArray(dbCheckouts) ? dbCheckouts : [];
+
+        // 3. Sincronizar Logs Compartidos (audit_logs) para TODOS los usuarios
+        const { data: dbLogs, error: logsErr } = await client
+          .from('audit_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(500);
+
+        if (logsErr) throw logsErr;
+        this.auditLogs = Array.isArray(dbLogs) ? dbLogs : [];
+
+        // 4. Sincronizar Perfiles de Profesorado (profiles)
+        const { data: dbProfiles, error: profErr } = await client
+          .from('profiles')
+          .select('*');
+
+        if (profErr) throw profErr;
+        this.users = (Array.isArray(dbProfiles) ? dbProfiles : []).map(p => ({
+          id: p.id,
+          email: p.email,
+          full_name: p.full_name,
+          role: p.role || 'profesor',
+          department: p.department || 'Emergencias y Protección Civil',
+          password: p.password || null
+        }));
+
+        this.saveToStorage();
+        this.refreshAllActiveViews();
+        this.setupRealtimeSubscription();
+
+        if (window.app && typeof window.app.updateDbStatusChip === 'function') {
+          window.app.updateDbStatusChip();
+        }
+        if (forceToast && window.app) {
+          window.app.showToast('Base de datos y logs sincronizados con Supabase', 'success');
+        }
+        return true;
+      } catch (err) {
+        console.error('Error de conexión / sincronización con Supabase:', err);
+        window.supabaseService.markDisconnected(err.message || 'Error de conexión con Supabase');
+        this.items = [];
+        this.checkouts = [];
+        this.auditLogs = [];
+        this.users = [];
+        this.refreshAllActiveViews();
+        if (window.app) {
+          window.app.updateDbStatusChip();
+          if (typeof window.app.enforceSupabaseGate === 'function') {
+            window.app.enforceSupabaseGate();
+          }
+        }
+        return false;
+      } finally {
+        this._syncInFlight = null;
+      }
+    })();
+
+    return this._syncInFlight;
   }
 
   // --- MÉTODOS DE MATERIALES ---
@@ -784,13 +933,14 @@ class Store {
   }
 
   addItem(newItem) {
+    if (!this.requireSupabase()) return null;
     const item = {
-      id: 'item-' + Date.now(),
+      id: this.generateUUID(),
       code: newItem.code || `MAT-${Math.floor(1000 + Math.random() * 9000)}`,
       serial_number: newItem.serial_number || 'S/N',
       name: newItem.name,
       category: newItem.category || 'Incendios e Industrial',
-      warehouse_id: newItem.warehouse_id || 'alm-1',
+      warehouse_id: newItem.warehouse_id || 'alm-principal',
       location_shelf: newItem.location_shelf || 'A.1',
       mfg_date: newItem.mfg_date || null,
       use_date: newItem.use_date || new Date().toISOString().split('T')[0],
@@ -808,17 +958,20 @@ class Store {
     this.items.unshift(item);
     this.saveToStorage();
 
-    this.addAuditLog('ALTA', item.code, item.name, `Material dado de alta en ${item.warehouse_id} balda ${item.location_shelf}`);
+    this.addAuditLog('ALTA', item.code, item.name, `Material dado de alta en ${item.warehouse_id} sección ${item.location_shelf}`, item.id);
 
     // Si está conectado a Supabase, enviar inserción
     if (window.supabaseService && window.supabaseService.isOnline()) {
-      window.supabaseService.client.from('items').insert([item]).then();
+      window.supabaseService.client.from('items').insert([item]).then(({ error }) => {
+        if (error) console.error('Error guardando item en Supabase:', error);
+      });
     }
 
     return item;
   }
 
   updateItem(id, updates) {
+    if (!this.requireSupabase()) return null;
     const index = this.items.findIndex(it => it.id === id);
     if (index !== -1) {
       this.items[index] = { ...this.items[index], ...updates };
@@ -830,7 +983,11 @@ class Store {
       this.addAuditLog('MODIFICACION', this.items[index].code, this.items[index].name, detailMsg, this.items[index].id);
 
       if (window.supabaseService && window.supabaseService.isOnline()) {
-        window.supabaseService.client.from('items').update(updates).eq('id', id).then();
+        const matchCol = this.isValidUUID(id) ? 'id' : 'code';
+        const matchVal = this.isValidUUID(id) ? id : this.items[index].code;
+        window.supabaseService.client.from('items').update(updates).eq(matchCol, matchVal).then(({ error }) => {
+          if (error) console.error('Error actualizando item en Supabase:', error);
+        });
       }
       return this.items[index];
     }
@@ -838,6 +995,7 @@ class Store {
   }
 
   deleteItem(id) {
+    if (!this.requireSupabase()) return false;
     const item = this.getItemById(id);
     if (!item) return false;
 
@@ -847,12 +1005,17 @@ class Store {
     this.addAuditLog('BAJA', item.code, item.name, 'Material dado de baja del inventario');
 
     if (window.supabaseService && window.supabaseService.isOnline()) {
-      window.supabaseService.client.from('items').delete().eq('id', id).then();
+      const matchCol = this.isValidUUID(id) ? 'id' : 'code';
+      const matchVal = this.isValidUUID(id) ? id : item.code;
+      window.supabaseService.client.from('items').delete().eq(matchCol, matchVal).then(({ error }) => {
+        if (error) console.error('Error eliminando item en Supabase:', error);
+      });
     }
     return true;
   }
 
   markItemLost(id, reason) {
+    if (!this.requireSupabase()) return false;
     const item = this.getItemById(id);
     if (!item) return false;
 
@@ -872,10 +1035,14 @@ class Store {
     this.addAuditLog('EXTRAVIO', item.code, item.name, `Motivo: ${reason}`, item.id);
 
     if (window.supabaseService && window.supabaseService.isOnline()) {
+      const matchCol = this.isValidUUID(id) ? 'id' : 'code';
+      const matchVal = this.isValidUUID(id) ? id : item.code;
       window.supabaseService.client.from('items').update({
         status: 'extraviado',
         observations: item.observations
-      }).eq('id', id).then();
+      }).eq(matchCol, matchVal).then(({ error }) => {
+        if (error) console.error('Error marcando extravío en Supabase:', error);
+      });
     }
     return true;
   }
@@ -883,6 +1050,7 @@ class Store {
   // --- MÉTODOS DE CAMBIO DE ESTADO EN LOTE (Mantenimiento, Fuera de Mantenimiento, Extraviado, Borrado) ---
 
   setItemsMaintenance(itemIds, notes = 'Mantenimiento preventivo / correctivo') {
+    if (!this.requireSupabase()) return { success: false, count: 0 };
     if (!Array.isArray(itemIds) || itemIds.length === 0) return { success: false, count: 0 };
     let count = 0;
     const now = new Date();
@@ -893,6 +1061,7 @@ class Store {
     const hours = pad(now.getHours());
     const mins = pad(now.getMinutes());
     const nowFormatted = `${year}-${month}-${day} ${hours}:${mins}`;
+    const nowIso = now.toISOString();
 
     const borrowerName = this.currentUser ? `${this.currentUser.full_name} (Taller)` : 'Taller Mantenimiento';
     const borrowerEmail = this.currentUser ? this.currentUser.email : 'taller@murciaeduca.es';
@@ -903,7 +1072,7 @@ class Store {
 
       item.status = 'mantenimiento';
       item.current_borrower = borrowerName;
-      item.checkout_time = nowFormatted;
+      item.checkout_time = nowIso;
 
       if (!item.usage_history) item.usage_history = [];
       item.usage_history.unshift({
@@ -915,24 +1084,31 @@ class Store {
       // Crear registro activo en Material en Uso (public.en_uso)
       const seq = String(this.checkouts.length + 1).padStart(4, '0');
       const receiptCode = `${seq}.${hours}:${mins}.${day}${month}${year}`;
-      const chkId = 'chk-maint-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+      const chkId = this.generateUUID();
 
-      const checkoutRecord = {
+      const checkoutDbRecord = {
         id: chkId,
-        item_id: item.id,
+        receipt_code: receiptCode,
+        item_id: this.isValidUUID(item.id) ? item.id : null,
         item_code: item.code,
         item_name: item.name,
         borrower_name: borrowerName,
         borrower_email: borrowerEmail,
         purpose: `Mantenimiento: ${notes}`,
-        destination: 'Taller / Mantenimiento',
-        checkout_time: nowFormatted,
-        receipt_code: receiptCode,
+        checkout_time: nowIso,
+        checkin_time: null,
         status: 'activo',
+        checkin_notes: null
+      };
+
+      const checkoutLocalRecord = {
+        ...checkoutDbRecord,
+        item_id: item.id,
+        destination: 'Taller / Mantenimiento',
         type: 'mantenimiento',
         notes: notes
       };
-      this.checkouts.unshift(checkoutRecord);
+      this.checkouts.unshift(checkoutLocalRecord);
 
       this.addAuditLog('MANTENIMIENTO', item.code, item.name, `Enviado a mantenimiento: ${notes}`, item.id);
 
@@ -940,10 +1116,14 @@ class Store {
         window.supabaseService.client.from('items').update({
           status: 'mantenimiento',
           current_borrower: borrowerName,
-          checkout_time: nowFormatted
-        }).eq('id', item.id).then();
+          checkout_time: nowIso
+        }).eq('id', item.id).then(({ error }) => {
+          if (error) console.error('Error actualizando item en mantenimiento en Supabase:', error);
+        });
 
-        window.supabaseService.client.from('checkouts').insert([checkoutRecord]).then();
+        window.supabaseService.client.from('checkouts').insert([checkoutDbRecord]).then(({ error }) => {
+          if (error) console.error('Error insertando checkout de mantenimiento en Supabase:', error);
+        });
       }
 
       count++;
@@ -954,6 +1134,7 @@ class Store {
   }
 
   clearItemsMaintenance(itemIds) {
+    if (!this.requireSupabase()) return { success: false, count: 0 };
     if (!Array.isArray(itemIds) || itemIds.length === 0) return { success: false, count: 0 };
     let count = 0;
     const now = new Date();
@@ -964,6 +1145,7 @@ class Store {
     const hours = pad(now.getHours());
     const mins = pad(now.getMinutes());
     const nowFormatted = `${year}-${month}-${day} ${hours}:${mins}`;
+    const nowIso = now.toISOString();
 
     itemIds.forEach(id => {
       const item = this.getItemById(id);
@@ -982,17 +1164,19 @@ class Store {
 
       // Cerrar checkouts activos de mantenimiento en checkouts (Material en Uso)
       this.checkouts.forEach(chk => {
-        if (chk.item_id === item.id && chk.status === 'activo') {
+        if ((chk.item_id === item.id || chk.item_code === item.code) && chk.status === 'activo') {
           chk.status = 'devuelto';
-          chk.checkin_time = nowFormatted;
+          chk.checkin_time = nowIso;
           chk.checkin_notes = 'Fin de mantenimiento. Equipo operativo.';
 
-          if (window.supabaseService && window.supabaseService.isOnline()) {
+          if (window.supabaseService && window.supabaseService.isOnline() && this.isValidUUID(chk.id)) {
             window.supabaseService.client.from('checkouts').update({
               status: 'devuelto',
-              checkin_time: nowFormatted,
+              checkin_time: nowIso,
               checkin_notes: 'Fin de mantenimiento'
-            }).eq('id', chk.id).then();
+            }).eq('id', chk.id).then(({ error }) => {
+              if (error) console.error('Error cerrando checkout mantenimiento en Supabase:', error);
+            });
           }
         }
       });
@@ -1000,11 +1184,15 @@ class Store {
       this.addAuditLog('FIN_MANTENIMIENTO', item.code, item.name, 'Fin de mantenimiento. Reincorporado como disponible.', item.id);
 
       if (window.supabaseService && window.supabaseService.isOnline()) {
+        const matchCol = this.isValidUUID(item.id) ? 'id' : 'code';
+        const matchVal = this.isValidUUID(item.id) ? item.id : item.code;
         window.supabaseService.client.from('items').update({
           status: 'disponible',
           current_borrower: null,
           checkout_time: null
-        }).eq('id', item.id).then();
+        }).eq(matchCol, matchVal).then(({ error }) => {
+          if (error) console.error('Error limpiando mantenimiento en Supabase:', error);
+        });
       }
 
       count++;
@@ -1015,6 +1203,7 @@ class Store {
   }
 
   setItemsLost(itemIds, reason = 'No localizado') {
+    if (!this.requireSupabase()) return { success: false, count: 0 };
     if (!Array.isArray(itemIds) || itemIds.length === 0) return { success: false, count: 0 };
     let count = 0;
     const now = new Date();
@@ -1071,12 +1260,15 @@ class Store {
   }
 
   deleteMultipleItems(itemIds) {
+    if (!this.requireSupabase()) return { success: false, count: 0 };
     if (!Array.isArray(itemIds) || itemIds.length === 0) return { success: false, count: 0 };
     let count = 0;
 
+    const codesToDelete = [];
     itemIds.forEach(id => {
       const item = this.getItemById(id);
       if (item) {
+        codesToDelete.push(item.code);
         this.addAuditLog('BAJA', item.code, item.name, 'Eliminado de la base de datos por Administrador.', item.id);
         count++;
       }
@@ -1085,7 +1277,15 @@ class Store {
     this.items = this.items.filter(it => !itemIds.includes(it.id));
 
     if (window.supabaseService && window.supabaseService.isOnline()) {
-      window.supabaseService.client.from('items').delete().in('id', itemIds).then();
+      const validUuids = itemIds.filter(id => this.isValidUUID(id));
+      if (validUuids.length > 0) {
+        window.supabaseService.client.from('items').delete().in('id', validUuids).then(({ error }) => {
+          if (error) console.error('Error borrando items en Supabase:', error);
+        });
+      }
+      if (codesToDelete.length > 0 && validUuids.length !== itemIds.length) {
+        window.supabaseService.client.from('items').delete().in('code', codesToDelete).then();
+      }
     }
 
     this.saveToStorage();
@@ -1094,6 +1294,7 @@ class Store {
 
   // --- MÉTODOS DE SALIDAS Y DEVOLUCIONES ---
   checkoutItem(itemId, borrowerName, borrowerEmail, purpose) {
+    if (!this.requireSupabase()) return { success: false, message: 'Sin conexión con Supabase' };
     const item = this.getItemById(itemId);
     if (!item) return { success: false, message: 'Material no encontrado' };
     if (item.status === 'sacado') return { success: false, message: 'El material ya se encuentra fuera del centro' };
@@ -1111,10 +1312,11 @@ class Store {
     // Código de registro formato pedido: 0001.15:35.27102026
     const receiptCode = `${seq}.${hours}:${mins}.${day}${month}${year}`;
     const checkoutTimeFormatted = `${year}-${month}-${day} ${hours}:${mins}`;
+    const nowIso = now.toISOString();
 
     item.status = 'sacado';
     item.current_borrower = `${borrowerName} (${borrowerEmail})`;
-    item.checkout_time = checkoutTimeFormatted;
+    item.checkout_time = nowIso;
     item.use_count = (item.use_count || 0) + 1;
 
     if (!item.usage_history) item.usage_history = [];
@@ -1124,8 +1326,9 @@ class Store {
       note: `Salida autorizada (${purpose}) - Vale: ${receiptCode}`
     });
 
+    const chkId = this.generateUUID();
     const checkoutRecord = {
-      id: 'chk-' + Date.now(),
+      id: chkId,
       receipt_code: receiptCode,
       item_id: item.id,
       item_code: item.code,
@@ -1133,7 +1336,7 @@ class Store {
       borrower_name: borrowerName,
       borrower_email: borrowerEmail,
       purpose: purpose || 'Práctica docente',
-      checkout_time: checkoutTimeFormatted,
+      checkout_time: nowIso,
       checkin_time: null,
       status: 'activo',
       checkin_notes: null
@@ -1142,31 +1345,41 @@ class Store {
     this.checkouts.unshift(checkoutRecord);
     this.saveToStorage();
 
-    this.addAuditLog('SALIDA', item.code, item.name, `Retirado por ${borrowerName} (${borrowerEmail}). Motivo: ${purpose}. Vale: ${receiptCode}`);
+    this.addAuditLog('SALIDA', item.code, item.name, `Retirado por ${borrowerName} (${borrowerEmail}). Motivo: ${purpose}. Vale: ${receiptCode}`, item.id);
 
     if (window.supabaseService && window.supabaseService.isOnline()) {
       window.supabaseService.client.from('items').update({
         status: 'sacado',
         current_borrower: item.current_borrower,
-        checkout_time: item.checkout_time,
+        checkout_time: nowIso,
         use_count: item.use_count
-      }).eq('id', item.id).then();
+      }).eq('id', item.id).then(({ error }) => {
+        if (error) console.error('Error actualizando item en salida Supabase:', error);
+      });
 
-      window.supabaseService.client.from('checkouts').insert([checkoutRecord]).then();
+      const dbPayload = {
+        ...checkoutRecord,
+        item_id: this.isValidUUID(item.id) ? item.id : null
+      };
+      window.supabaseService.client.from('checkouts').insert([dbPayload]).then(({ error }) => {
+        if (error) console.error('Error insertando checkout en Supabase:', error);
+      });
     }
 
     return { success: true, receiptCode, checkoutRecord, item };
   }
 
   checkinItem(checkoutId, notes = '', condition = 'disponible') {
+    if (!this.requireSupabase()) return { success: false, message: 'Sin conexión con Supabase' };
     const chk = this.checkouts.find(c => c.id === checkoutId);
     if (!chk) return { success: false, message: 'Registro de salida no encontrado' };
 
-    const item = this.getItemById(chk.item_id);
+    const item = this.getItemById(chk.item_id) || this.items.find(i => i.code === chk.item_code);
     const nowFormatted = new Date().toLocaleString();
+    const nowIso = new Date().toISOString();
 
     chk.status = 'devuelto';
-    chk.checkin_time = nowFormatted;
+    chk.checkin_time = nowIso;
     chk.checkin_notes = notes;
 
     if (item) {
@@ -1187,14 +1400,16 @@ class Store {
     }
 
     this.saveToStorage();
-    this.addAuditLog('DEVOLUCION', chk.item_code, chk.item_name, `Devuelto por ${chk.borrower_name}. Estado: ${condition}. Notas: ${notes || 'Correcto'}`);
+    this.addAuditLog('DEVOLUCION', chk.item_code, chk.item_name, `Devuelto por ${chk.borrower_name}. Estado: ${condition}. Notas: ${notes || 'Correcto'}`, chk.item_id);
 
     if (window.supabaseService && window.supabaseService.isOnline()) {
       window.supabaseService.client.from('checkouts').update({
         status: 'devuelto',
-        checkin_time: chk.checkin_time,
+        checkin_time: nowIso,
         checkin_notes: notes
-      }).eq('id', checkoutId).then();
+      }).eq('id', checkoutId).then(({ error }) => {
+        if (error) console.error('Error actualizando devolución en Supabase checkouts:', error);
+      });
 
       if (item) {
         window.supabaseService.client.from('items').update({
@@ -1202,7 +1417,9 @@ class Store {
           current_borrower: null,
           checkout_time: null,
           observations: item.observations
-        }).eq('id', item.id).then();
+        }).eq('id', item.id).then(({ error }) => {
+          if (error) console.error('Error actualizando devolución en Supabase items:', error);
+        });
       }
     }
 
@@ -1211,6 +1428,7 @@ class Store {
 
   // --- SALIDA MÚLTIPLE DE MATERIALES SELECCIONADOS ---
   checkoutMultipleItems(itemIds, borrowerName, borrowerEmail, purpose) {
+    if (!this.requireSupabase()) return { success: false, message: 'Sin conexión con Supabase' };
     const validItems = [];
     for (const id of itemIds) {
       const item = this.getItemById(id);
@@ -1233,13 +1451,14 @@ class Store {
     const seq = String(this.checkouts.length + 1).padStart(4, '0');
     const receiptCode = `${seq}.${hours}:${mins}.${day}${month}${year}`;
     const checkoutTimeFormatted = `${year}-${month}-${day} ${hours}:${mins}`;
+    const nowIso = now.toISOString();
 
     const createdCheckouts = [];
 
     for (const item of validItems) {
       item.status = 'sacado';
       item.current_borrower = `${borrowerName} (${borrowerEmail})`;
-      item.checkout_time = checkoutTimeFormatted;
+      item.checkout_time = nowIso;
       item.use_count = (item.use_count || 0) + 1;
 
       if (!item.usage_history) item.usage_history = [];
@@ -1250,7 +1469,7 @@ class Store {
       });
 
       const checkoutRecord = {
-        id: 'chk-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+        id: this.generateUUID(),
         receipt_code: receiptCode,
         item_id: item.id,
         item_code: item.code,
@@ -1258,7 +1477,7 @@ class Store {
         borrower_name: borrowerName,
         borrower_email: borrowerEmail,
         purpose: purpose || 'Práctica docente',
-        checkout_time: checkoutTimeFormatted,
+        checkout_time: nowIso,
         checkin_time: null,
         status: 'activo',
         checkin_notes: null
@@ -1273,11 +1492,19 @@ class Store {
         window.supabaseService.client.from('items').update({
           status: 'sacado',
           current_borrower: item.current_borrower,
-          checkout_time: item.checkout_time,
+          checkout_time: nowIso,
           use_count: item.use_count
-        }).eq('id', item.id).then();
+        }).eq('id', item.id).then(({ error }) => {
+          if (error) console.error('Error actualizando item en salida múltiple Supabase:', error);
+        });
 
-        window.supabaseService.client.from('checkouts').insert([checkoutRecord]).then();
+        const dbPayload = {
+          ...checkoutRecord,
+          item_id: this.isValidUUID(item.id) ? item.id : null
+        };
+        window.supabaseService.client.from('checkouts').insert([dbPayload]).then(({ error }) => {
+          if (error) console.error('Error insertando checkout múltiple en Supabase:', error);
+        });
       }
     }
 
@@ -1287,18 +1514,20 @@ class Store {
 
   // --- DEVOLUCIÓN MÚLTIPLE DE MATERIALES SELECCIONADOS ---
   checkinMultipleItems(checkoutIds, condition = 'disponible', notes = '') {
+    if (!this.requireSupabase()) return { success: false, count: 0 };
     let count = 0;
     const nowFormatted = new Date().toLocaleString();
+    const nowIso = new Date().toISOString();
 
     for (const chkId of checkoutIds) {
       const chk = this.checkouts.find(c => c.id === chkId);
       if (!chk || chk.status !== 'activo') continue;
 
       chk.status = 'devuelto';
-      chk.checkin_time = nowFormatted;
+      chk.checkin_time = nowIso;
       chk.checkin_notes = notes;
 
-      const item = this.getItemById(chk.item_id);
+      const item = this.getItemById(chk.item_id) || this.items.find(i => i.code === chk.item_code);
       if (item) {
         item.status = condition;
         item.current_borrower = null;
@@ -1316,7 +1545,9 @@ class Store {
             status: item.status,
             current_borrower: null,
             checkout_time: null
-          }).eq('id', item.id).then();
+          }).eq('id', item.id).then(({ error }) => {
+            if (error) console.error('Error actualizando item en devolución múltiple Supabase:', error);
+          });
         }
       }
 
@@ -1325,9 +1556,11 @@ class Store {
       if (window.supabaseService && window.supabaseService.isOnline()) {
         window.supabaseService.client.from('checkouts').update({
           status: 'devuelto',
-          checkin_time: chk.checkin_time,
+          checkin_time: nowIso,
           checkin_notes: notes
-        }).eq('id', chk.id).then();
+        }).eq('id', chk.id).then(({ error }) => {
+          if (error) console.error('Error actualizando checkout en devolución múltiple Supabase:', error);
+        });
       }
 
       count++;
@@ -1341,27 +1574,25 @@ class Store {
     return this.checkouts.filter(c => c.status === 'activo');
   }
 
-  // --- MÉTODOS DE AUDITORÍA ---
+  // --- MÉTODOS DE AUDITORÍA EN BASE DE DATOS COMPARTIDA ---
   addAuditLog(action, itemCode, itemName, details, itemId = null) {
+    if (!window.supabaseService || !window.supabaseService.isOnline()) return;
     const user = this.currentUser || { full_name: 'Usuario', email: 'usuario@murciaeduca.es' };
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const timestamp = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const nowIso = new Date().toISOString();
 
     let finalItemId = itemId;
     if (!finalItemId && itemCode && itemCode !== 'N/A') {
       const it = this.items.find(i => i.code === itemCode);
       if (it) finalItemId = it.id;
     }
-    if (!finalItemId) finalItemId = 'item-' + Math.floor(100 + Math.random() * 900);
 
     const logEntry = {
-      id: 'log-' + Date.now(),
-      created_at: timestamp,
+      id: this.generateUUID(),
+      created_at: nowIso,
       user_name: user.full_name,
       user_email: user.email,
-      action: action, // SALIDA, DEVOLUCION, ALTA, MODIFICACION, EXTRAVIO, BAJA, LOGIN
-      item_id: finalItemId,
+      action: action, // SALIDA, DEVOLUCION, ALTA, MODIFICACION, EXTRAVIO, BAJA, LOGIN, MANTENIMIENTO
+      item_id: finalItemId || 'N/A',
       item_code: itemCode || 'N/A',
       item_name: itemName || 'N/A',
       details: details || ''
@@ -1370,17 +1601,29 @@ class Store {
     this.auditLogs.unshift(logEntry);
     this.saveToStorage();
 
+    if (window.auditManager && window.app && window.app.currentView === 'audit') {
+      window.auditManager.renderLogs();
+    }
+
     if (window.supabaseService && window.supabaseService.isOnline()) {
-      window.supabaseService.client.from('audit_logs').insert([logEntry]).then();
+      window.supabaseService.client.from('audit_logs').insert([logEntry]).then(({ error }) => {
+        if (error) {
+          console.error('Error al insertar log en Supabase audit_logs:', error);
+          if (window.app) {
+            window.app.showToast(`Aviso: Log guardado en local pero falló en BD (${error.message})`, 'warning');
+          }
+        }
+      });
     }
   }
 
-  getAuditLogs(limit = 100) {
+  getAuditLogs(limit = 200) {
     return this.auditLogs.slice(0, limit);
   }
 
   // --- GESTIÓN DE PROFESORES / USUARIOS ---
   addUser(userData) {
+    if (!this.requireSupabase()) return { success: false, message: 'Sin conexión con Supabase' };
     const cleanEmail = userData.email.trim().toLowerCase();
     if (!cleanEmail.endsWith('@murciaeduca.es')) {
       return { success: false, message: 'El correo electrónico debe pertenecer al dominio institucional @murciaeduca.es' };
@@ -1390,7 +1633,7 @@ class Store {
     }
 
     const newUser = {
-      id: 'usr-' + Date.now(),
+      id: this.generateUUID(),
       email: cleanEmail,
       password: userData.password || 'murciaeduca123',
       full_name: userData.full_name.trim(),
@@ -1401,21 +1644,38 @@ class Store {
     this.users.push(newUser);
     this.saveToStorage();
 
-    this.addAuditLog('USUARIO', newUser.role.toUpperCase(), newUser.full_name, `Cuenta dada de alta por el Administrador (${newUser.email})`);
+    this.addAuditLog('USUARIO', newUser.role.toUpperCase(), newUser.full_name, `Cuenta dada de alta por el Administrador (${newUser.email})`, newUser.id);
 
-    if (window.supabaseService && window.supabaseService.isOnline()) {
-      window.supabaseService.client.from('profiles').insert([{
-        email: newUser.email,
-        full_name: newUser.full_name,
-        role: newUser.role,
-        department: newUser.department
-      }]).then();
-    }
+    const client = window.supabaseService.client;
+    client.from('profiles').insert([{
+      id: newUser.id,
+      email: newUser.email,
+      full_name: newUser.full_name,
+      role: newUser.role,
+      department: newUser.department,
+      password: newUser.password
+    }]).then(({ error }) => {
+      if (error && error.code === '42703') {
+        // Si la tabla profiles aún no tiene columna password, reintentar sin ella
+        client.from('profiles').insert([{
+          id: newUser.id,
+          email: newUser.email,
+          full_name: newUser.full_name,
+          role: newUser.role,
+          department: newUser.department
+        }]).then(({ error: retryErr }) => {
+          if (retryErr) console.error('Error guardando perfil en Supabase:', retryErr);
+        });
+      } else if (error) {
+        console.error('Error guardando perfil en Supabase:', error);
+      }
+    });
 
     return { success: true, user: newUser };
   }
 
   deleteUser(userId) {
+    if (!this.requireSupabase()) return { success: false, message: 'Sin conexión con Supabase' };
     const user = this.users.find(u => u.id === userId);
     if (!user) return false;
     if (user.role === 'admin' && this.users.filter(u => u.role === 'admin').length <= 1) {
@@ -1424,7 +1684,13 @@ class Store {
 
     this.users = this.users.filter(u => u.id !== userId);
     this.saveToStorage();
-    this.addAuditLog('USUARIO', 'BAJA', user.full_name, `Cuenta eliminada (${user.email})`);
+    this.addAuditLog('USUARIO', 'BAJA', user.full_name, `Cuenta eliminada (${user.email})`, user.id);
+
+    if (this.isValidUUID(userId)) {
+      window.supabaseService.client.from('profiles').delete().eq('id', userId).then(({ error }) => {
+        if (error) console.error('Error eliminando perfil en Supabase:', error);
+      });
+    }
     return { success: true };
   }
 

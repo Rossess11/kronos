@@ -9,7 +9,7 @@ class App {
     this.uploadedPhotoData = '';
   }
 
-  init() {
+  async init() {
     this.startClockAndShiftTracker();
     this.bindNavigation();
     this.bindForms();
@@ -24,12 +24,60 @@ class App {
     if (window.checkoutsManager) window.checkoutsManager.init();
     if (window.auditManager) window.auditManager.init();
 
+    // Verificación estricta de conexión con Supabase al arrancar
     if (window.authService) {
-      if (window.authService.isAuthenticated()) {
-        window.authService.updateUserUI();
+      await window.authService.validateActiveSession();
+    }
+    this.updateDbStatusChip();
+    this.updateLoginDbBanner();
+  }
+
+  enforceSupabaseGate() {
+    if (window.authService) {
+      window.authService.showLoginScreen();
+    }
+    this.updateDbStatusChip();
+    this.updateLoginDbBanner();
+  }
+
+  updateLoginDbBanner() {
+    const statusText = document.getElementById('login-db-status-text');
+    const errorDetail = document.getElementById('login-db-error-detail');
+    const statusBox = document.getElementById('login-db-status-box');
+    const submitBtn = document.getElementById('btn-login-submit');
+    const configBtn = document.getElementById('btn-login-config-supabase');
+
+    const isOnline = window.supabaseService && window.supabaseService.isOnline();
+
+    if (statusText) {
+      if (isOnline) {
+        statusText.innerHTML = '<span style="color: var(--sb-green);">&#9679; Conectado a Supabase</span>';
       } else {
-        window.authService.showLoginScreen();
+        statusText.innerHTML = '<span style="color: #f85149;">&#9679; Sin conexión con Supabase</span>';
       }
+    }
+
+    if (statusBox) {
+      statusBox.style.borderColor = isOnline ? 'rgba(62, 207, 142, 0.35)' : 'rgba(248, 81, 73, 0.45)';
+    }
+
+    if (errorDetail) {
+      if (!isOnline && window.supabaseService && window.supabaseService.lastError) {
+        errorDetail.textContent = window.supabaseService.lastError;
+        errorDetail.style.display = 'block';
+      } else {
+        errorDetail.style.display = 'none';
+      }
+    }
+
+    if (submitBtn) {
+      submitBtn.disabled = !isOnline;
+      submitBtn.style.opacity = isOnline ? '1' : '0.45';
+      submitBtn.style.cursor = isOnline ? 'pointer' : 'not-allowed';
+    }
+
+    if (configBtn) {
+      configBtn.textContent = isOnline ? 'Configurar BD' : 'Conectar BD';
     }
   }
 
@@ -236,19 +284,25 @@ class App {
 
     if (tabTitle) tabTitle.textContent = tableMap[viewName] || `public.${viewName}`;
 
-    // Refrescar vistas
+    // Refrescar vistas y sincronizar con base de datos compartida en segundo plano
     if (viewName === 'inventory' && window.inventoryManager) {
       window.inventoryManager.renderTable();
+      if (window.store) window.store.trySupabaseSync(false);
     } else if (viewName === 'checkouts' && window.checkoutsManager) {
       window.checkoutsManager.renderActiveCheckoutsTable();
+      if (window.store) window.store.trySupabaseSync(false);
     } else if (viewName === 'audit' && window.auditManager) {
       window.auditManager.renderLogs();
+      if (window.store) window.store.trySupabaseSync(false);
     } else if (viewName === 'warehouse' && window.warehouseMapViewer) {
       window.warehouseMapViewer.renderWarehouseView(window.warehouseMapViewer.currentWarehouseId);
+      if (window.store) window.store.trySupabaseSync(false);
     } else if (viewName === 'dashboard') {
       this.updateDashboardStats();
+      if (window.store) window.store.trySupabaseSync(false);
     } else if (viewName === 'teachers') {
       this.renderUsersList();
+      if (window.store) window.store.trySupabaseSync(false);
     } else if (viewName === 'add-item') {
       const whSelect = document.getElementById('item-warehouse');
       const shelfSelect = document.getElementById('item-shelf');
@@ -351,14 +405,33 @@ class App {
   }
 
   bindForms() {
-    // Formulario de Login
+    // Formulario de Login (Solo Supabase conectado)
     const loginForm = document.getElementById('login-form');
+    const btnLoginConfig = document.getElementById('btn-login-config-supabase');
+    if (btnLoginConfig) {
+      btnLoginConfig.addEventListener('click', () => {
+        this.openModal('supabase-settings-modal');
+      });
+    }
+
     if (loginForm) {
-      loginForm.addEventListener('submit', (e) => {
+      loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const email = document.getElementById('login-email').value;
         const pass = document.getElementById('login-password').value;
-        const res = window.authService.login(email, pass);
+        const submitBtn = document.getElementById('btn-login-submit');
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Verificando en Supabase...';
+        }
+
+        const res = await window.authService.login(email, pass);
+
+        if (submitBtn) {
+          submitBtn.textContent = 'Iniciar Sesión en KRONOS';
+        }
+        this.updateLoginDbBanner();
+
         if (res.success) {
           this.showToast(`Bienvenido/a, ${res.user.full_name}`, 'success');
           this.switchView('inventory');
@@ -432,6 +505,8 @@ class App {
           photo_url: this.uploadedPhotoData
         });
 
+        if (!newItem) return;
+
         this.showToast(`Material registrado correctamente (${newItem.code})`, 'success');
         addItemForm.reset();
         if (itemWhSelect) this.populateSectionDropdown(itemWhSelect.value);
@@ -472,48 +547,107 @@ class App {
       });
     }
 
-    // Formulario de Conexión Supabase
+    // Formulario de Conexión Supabase (protege credenciales predeterminadas)
     const supabaseForm = document.getElementById('supabase-config-form');
     if (supabaseForm) {
       const urlInput = document.getElementById('supabase-url-input');
       const keyInput = document.getElementById('supabase-key-input');
+      const resetBtn = document.getElementById('btn-reset-supabase-default');
+      const btnTestSupabase = document.getElementById('btn-test-supabase');
+      const btnGenObf = document.getElementById('btn-generate-obfuscated');
 
-      if (urlInput) urlInput.value = window.supabaseService.url;
-      if (keyInput) keyInput.value = window.supabaseService.anonKey;
+      this.refreshSupabaseSettingsModal();
 
       supabaseForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const url = urlInput.value;
-        const key = keyInput.value;
+        const url = (urlInput ? urlInput.value : '').trim();
+        const key = (keyInput ? keyInput.value : '').trim();
 
-        const test = await window.supabaseService.testConnection(url, key);
+        if ((url && !key) || (!url && key)) {
+          alert('Si deseas cambiar la conexión, introduce tanto la URL del proyecto como la Anon Key.');
+          return;
+        }
+
+        const testUrl = url || window.supabaseService.url;
+        const testKey = key || window.supabaseService.anonKey;
+
+        if (!testUrl || !testKey) {
+          alert('Introduce el Project URL y la Anon / Public API Key de Supabase.');
+          return;
+        }
+
+        const test = await window.supabaseService.testConnection(testUrl, testKey);
         if (test.success) {
-          window.supabaseService.saveCredentials(url, key);
-          this.showToast('¡Conectado a la base de datos Supabase con éxito!', 'success');
+          if (url && key) {
+            window.supabaseService.saveCredentials(url, key);
+          } else {
+            window.supabaseService.initClient();
+          }
+          if (urlInput) urlInput.value = '';
+          if (keyInput) keyInput.value = '';
+
+          if (window.store) {
+            window.store._realtimeSubscribed = false;
+            await window.store.trySupabaseSync(true);
+          } else {
+            this.showToast('¡Conectado a la base de datos Supabase con éxito!', 'success');
+          }
+          if (window.authService && window.authService.currentUser) {
+            await window.authService.validateActiveSession();
+          }
           this.updateDbStatusChip();
+          this.updateLoginDbBanner();
+          this.refreshSupabaseSettingsModal();
           this.closeModal('supabase-settings-modal');
         } else {
           alert(`Error de conexión a Supabase: ${test.message}`);
         }
       });
 
-      const btnTestSupabase = document.getElementById('btn-test-supabase');
       if (btnTestSupabase) {
         btnTestSupabase.addEventListener('click', async () => {
+          const url = (urlInput ? urlInput.value : '').trim() || window.supabaseService.url;
+          const key = (keyInput ? keyInput.value : '').trim() || window.supabaseService.anonKey;
           btnTestSupabase.textContent = 'Verificando...';
-          const test = await window.supabaseService.testConnection(urlInput.value, keyInput.value);
+          const test = await window.supabaseService.testConnection(url, key);
           btnTestSupabase.textContent = 'Probar Conexión';
           alert(test.message);
         });
       }
 
-      const btnLocalMode = document.getElementById('btn-use-local-mode');
-      if (btnLocalMode) {
-        btnLocalMode.addEventListener('click', () => {
-          window.supabaseService.switchToLocalMode();
-          this.showToast('Activado Modo Local Demo', 'warning');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', async () => {
+          window.supabaseService.resetToDefault();
+          if (urlInput) urlInput.value = '';
+          if (keyInput) keyInput.value = '';
+          if (window.store) {
+            window.store._realtimeSubscribed = false;
+            await window.store.trySupabaseSync(true);
+          }
+          if (window.authService && window.authService.currentUser) {
+            await window.authService.validateActiveSession();
+          }
           this.updateDbStatusChip();
-          this.closeModal('supabase-settings-modal');
+          this.updateLoginDbBanner();
+          this.refreshSupabaseSettingsModal();
+          this.showToast('Conexión predeterminada restaurada', 'info');
+        });
+      }
+
+      if (btnGenObf) {
+        btnGenObf.addEventListener('click', () => {
+          const obfUrl = (document.getElementById('obf-url-input')?.value || '').trim();
+          const obfKey = (document.getElementById('obf-key-input')?.value || '').trim();
+          const outBox = document.getElementById('obf-output-code');
+          if (!obfUrl || !obfKey) {
+            alert('Introduce el Project URL y la Anon Public Key para generar el bloque oculto.');
+            return;
+          }
+          if (outBox) {
+            outBox.value = window.supabaseService.encodeForPublicRepo(obfUrl, obfKey);
+            outBox.style.display = 'block';
+            outBox.select();
+          }
         });
       }
     }
@@ -531,10 +665,10 @@ class App {
         connectBtn.style.borderColor = 'rgba(62, 207, 142, 0.4)';
       }
     } else {
-      label.textContent = 'Modo Local';
+      label.textContent = 'Sin Conexión BD';
       if (connectBtn) {
-        connectBtn.style.color = '#fbbf24';
-        connectBtn.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+        connectBtn.style.color = '#f85149';
+        connectBtn.style.borderColor = 'rgba(248, 81, 73, 0.4)';
       }
     }
   }
@@ -546,7 +680,7 @@ class App {
     listBody.innerHTML = '';
     window.store.users.forEach(u => {
       const tr = document.createElement('tr');
-      const idFormatted = `usr-042-${u.id.slice(4, 10)}`;
+      const idFormatted = u.id;
 
       tr.innerHTML = `
         <td><input type="checkbox"></td>
@@ -596,7 +730,43 @@ class App {
     });
   }
 
+  refreshSupabaseSettingsModal() {
+    const badge = document.getElementById('supabase-config-source-badge');
+    const resetBtn = document.getElementById('btn-reset-supabase-default');
+    const urlInput = document.getElementById('supabase-url-input');
+    const keyInput = document.getElementById('supabase-key-input');
+    const svc = window.supabaseService;
+
+    if (!svc) return;
+
+    if (urlInput) urlInput.value = '';
+    if (keyInput) keyInput.value = '';
+
+    if (resetBtn) {
+      resetBtn.style.display = (svc.hasCustomOverride() && svc.hasDefaultConfig()) ? 'inline-flex' : 'none';
+    }
+
+    if (!badge) return;
+
+    if (svc.hasCustomOverride()) {
+      badge.style.background = 'rgba(245, 158, 11, 0.08)';
+      badge.style.borderColor = 'rgba(245, 158, 11, 0.35)';
+      badge.innerHTML = '&#9679; <b>Conexión personalizada activa</b> en este dispositivo (credenciales ocultas).';
+    } else if (svc.hasDefaultConfig()) {
+      badge.style.background = 'rgba(62, 207, 142, 0.08)';
+      badge.style.borderColor = 'rgba(62, 207, 142, 0.35)';
+      badge.innerHTML = '&#9679; <b style="color: var(--sb-green);">Conexión predeterminada integrada activa</b> &bull; Lista automáticamente en cualquier dispositivo.';
+    } else {
+      badge.style.background = 'rgba(248, 81, 73, 0.08)';
+      badge.style.borderColor = 'rgba(248, 81, 73, 0.35)';
+      badge.innerHTML = '&#9679; <b style="color: #f85149;">Sin credenciales predeterminadas todavía</b> &bull; Pega tus credenciales abajo o genera el bloque oculto para <code>js/supabase-client.js</code>.';
+    }
+  }
+
   openModal(modalId) {
+    if (modalId === 'supabase-settings-modal') {
+      this.refreshSupabaseSettingsModal();
+    }
     const modal = document.getElementById(modalId);
     if (modal) modal.classList.add('active');
   }

@@ -31,6 +31,31 @@ class AuditManager {
         this.renderLogs();
       });
     }
+
+    const refreshBtn = document.getElementById('btn-refresh-audit-logs');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', async () => {
+        refreshBtn.disabled = true;
+        const ok = await window.store.trySupabaseSync(true);
+        refreshBtn.disabled = false;
+        if (!ok && window.app) {
+          window.app.showToast('Conecta Supabase para sincronizar logs entre dispositivos', 'warning');
+        }
+        this.renderLogs();
+      });
+    }
+  }
+
+  formatTimestamp(ts) {
+    if (!ts) return '';
+    if (typeof ts === 'string' && ts.includes('T')) {
+      const d = new Date(ts);
+      if (!isNaN(d.getTime())) {
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      }
+    }
+    return ts;
   }
 
   renderLogs() {
@@ -117,7 +142,7 @@ class AuditManager {
         <td style="font-family:var(--sb-font-mono); font-size:11.5px; color:var(--sb-green);">${log.item_code || 'N/A'}</td>
         <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis;">${log.item_name}</td>
         <td style="max-width:320px; overflow:hidden; text-overflow:ellipsis; color:var(--sb-text-muted);">${log.details}</td>
-        <td style="font-family:var(--sb-font-mono); font-size:11px; color:var(--sb-text-dim);">${log.created_at}</td>
+        <td style="font-family:var(--sb-font-mono); font-size:11px; color:var(--sb-text-dim);">${this.formatTimestamp(log.created_at)}</td>
       `;
 
       tableBody.appendChild(tr);
