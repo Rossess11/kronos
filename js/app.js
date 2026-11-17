@@ -10,6 +10,7 @@ class App {
   }
 
   async init() {
+    this.setupViewportFixForTablet();
     this.startClockAndShiftTracker();
     this.bindNavigation();
     this.bindForms();
@@ -78,6 +79,27 @@ class App {
 
     if (configBtn) {
       configBtn.textContent = isOnline ? 'Configurar BD' : 'Conectar BD';
+    }
+  }
+
+  setupViewportFixForTablet() {
+    const syncViewport = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+      const layout = document.getElementById('app-layout');
+      if (layout && window.visualViewport) {
+        const vv = window.visualViewport;
+        layout.style.height = `${Math.round(vv.height)}px`;
+        layout.style.top = `${Math.max(0, Math.round(vv.offsetTop))}px`;
+      }
+    };
+    syncViewport();
+    window.addEventListener('scroll', syncViewport, { passive: true });
+    window.addEventListener('orientationchange', () => setTimeout(syncViewport, 150));
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', syncViewport);
+      window.visualViewport.addEventListener('scroll', syncViewport);
     }
   }
 

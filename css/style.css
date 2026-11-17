@@ -48,6 +48,9 @@
   --radius-full: 9999px;
 
   --topbar-height: 52px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --topbar-total-height: calc(var(--topbar-height) + var(--safe-top));
   --sidebar-width: 250px;
 }
 
@@ -57,6 +60,14 @@
   padding: 0;
 }
 
+html,
+body {
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   font-family: var(--sb-font-sans);
   font-size: 13px;
@@ -64,8 +75,6 @@ body {
   line-height: 1.5;
   background-color: var(--sb-bg-canvas);
   color: var(--sb-text-main);
-  height: 100vh;
-  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -133,33 +142,43 @@ input[type="checkbox"]:focus {
    ESTRUCTURA GENERAL
    ======================================================== */
 #app-layout {
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  width: 100vw;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
   overflow: hidden;
+  padding-bottom: var(--safe-bottom);
 }
 
 /* ========================================================
    1. BARRA SUPERIOR (TOPBAR)
    ======================================================== */
 .sb-topbar {
-  height: var(--topbar-height);
+  height: var(--topbar-total-height);
+  min-height: var(--topbar-total-height);
   background-color: var(--sb-bg-surface);
   border-bottom: 1px solid var(--sb-border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 0 12px;
+  gap: 10px;
+  padding: var(--safe-top) max(14px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
   z-index: 100;
   user-select: none;
   flex-shrink: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .sb-topbar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .sb-mobile-toggle {
@@ -267,7 +286,10 @@ input[type="checkbox"]:focus {
 .sb-topbar-center {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
 }
 
 .sb-shift-pill {
@@ -279,6 +301,8 @@ input[type="checkbox"]:focus {
   align-items: center;
   gap: 6px;
   border: 1px solid;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .sb-shift-pill.morning {
   background-color: rgba(245, 158, 11, 0.12);
@@ -337,6 +361,9 @@ input[type="checkbox"]:focus {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: auto;
 }
 
 /* Recuadro 1: Nombre de Usuario */
@@ -364,18 +391,26 @@ input[type="checkbox"]:focus {
   align-items: center;
   gap: 8px;
   white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .sb-user-card-name-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .sb-user-name-text {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--sb-text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 170px;
 }
 
 .sb-user-role-tag {
@@ -413,8 +448,10 @@ input[type="checkbox"]:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
+  width: 34px;
   height: 32px;
+  min-width: 34px;
+  flex-shrink: 0;
   background-color: var(--sb-bg-subsurface);
   border: 1px solid var(--sb-border-default);
   color: var(--sb-text-muted);
@@ -515,7 +552,7 @@ input[type="checkbox"]:focus {
 .sb-sidebar-backdrop {
   display: none;
   position: fixed;
-  top: var(--topbar-height);
+  top: var(--topbar-total-height);
   left: 0;
   right: 0;
   bottom: 0;
@@ -1052,6 +1089,7 @@ input[type="checkbox"]:focus {
   height: auto;
   max-width: 100%;
   max-height: calc(100vh - 215px);
+  max-height: calc(100dvh - 215px);
 }
 
 /* Capa de Hotspots Interactivos */
@@ -1440,11 +1478,23 @@ input[type="checkbox"]:focus {
 /* ========================================================
    10. RESPONSIVE TABLETS & MÓVIL
    ======================================================== */
+@media (max-width: 1280px) {
+  .sb-breadcrumbs {
+    display: none;
+  }
+  .sb-user-dept-tag {
+    max-width: 145px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 @media (max-width: 1180px) {
   .sb-sidebar-unified,
   .sb-sidebar-unified.collapsed {
     position: fixed;
-    top: var(--topbar-height);
+    top: var(--topbar-total-height);
     bottom: 0;
     left: 0;
     width: var(--sidebar-width);
@@ -1463,9 +1513,51 @@ input[type="checkbox"]:focus {
   }
 }
 
-@media (max-width: 768px) {
-  .sb-breadcrumbs,
-  .sb-clock-pill {
+@media (max-width: 1060px) {
+  .sb-topbar {
+    gap: 6px;
+    padding: var(--safe-top) max(10px, env(safe-area-inset-right, 0px)) 0 max(10px, env(safe-area-inset-left, 0px));
+  }
+  .sb-topbar-left {
+    gap: 6px;
+  }
+  .sb-clock-pill,
+  .sb-user-dept-tag {
     display: none;
+  }
+  .sb-shift-pill {
+    font-size: 11px;
+    padding: 3px 8px;
+  }
+  .sb-connect-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .sb-user-name-text {
+    max-width: 120px;
+  }
+}
+
+@media (max-width: 860px) {
+  .sb-inventory-logo-btn,
+  .sb-online-pill {
+    display: none;
+  }
+  .sb-user-role-tag {
+    font-size: 9.5px;
+    padding: 2px 5px;
+  }
+}
+
+@media (max-width: 640px) {
+  .sb-topbar-center {
+    display: none;
+  }
+  .sb-user-role-tag {
+    display: none;
+  }
+  .sb-user-name-text {
+    max-width: 110px;
+    font-size: 12px;
   }
 }
